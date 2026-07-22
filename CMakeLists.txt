@@ -78,6 +78,11 @@ target_include_directories(HallucinatorRAVE PRIVATE Source)
 # them as system headers so only our own code is held to that standard.
 target_include_directories(HallucinatorRAVE SYSTEM PRIVATE ${TORCH_INCLUDE_DIRS})
 
+# Not using juce_recommended_lto_flags: LTO's cross-TU ODR checker is what
+# surfaced the ABI-propagation bug fixed above, but it also emits a
+# "serial compilation of N LTRANS jobs" note unless further tuned, and LTO
+# buys nothing for a plugin this size. Skipping it keeps the build both
+# warning-free and faster to iterate on.
 target_link_libraries(HallucinatorRAVE
     PRIVATE
         juce::juce_audio_utils
@@ -85,7 +90,6 @@ target_link_libraries(HallucinatorRAVE
         ${TORCH_LIBRARIES}
     PUBLIC
         juce::juce_recommended_config_flags
-        juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags)
 
 separate_arguments(TORCH_CXX_FLAGS_LIST UNIX_COMMAND "${TORCH_CXX_FLAGS}")
