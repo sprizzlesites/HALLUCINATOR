@@ -58,6 +58,43 @@ zip ships. Two wrinkles this project works around (see
   `-DTORCH_ROOT=...` at the two libraries it actually needs
   (`libtorch_cpu.so`, `libc10.so`), proven to link and run standalone.
 
+## Windows build (prepared here, unverified - needs an actual Windows machine)
+
+This project was developed entirely in a Linux container with no Windows
+machine available, and cross-compiling isn't a realistic substitute here:
+libtorch's Windows build ships as MSVC-ABI `.dll`s, and code built with a
+MinGW cross-compiler is not ABI-compatible with MSVC-built binaries
+(different C++ exception handling, name mangling, STL layout). The
+CMakeLists is written to support Windows (MSVC `.lib` linking instead of
+Linux `.so`, no GLIBCXX ABI flag, torch DLLs copied next to the built plugin
+since Windows has no rpath equivalent), and company/developer metadata
+("Sprizzle") is wired through `juce_add_plugin()`'s `COMPANY_*`/`BUNDLE_ID`
+args so it shows up in the built binary's version-resource properties - but
+none of this has actually been built or run on Windows. Treat it as a
+well-informed starting point, not a tested path.
+
+To build, on an actual Windows machine with Visual Studio installed:
+
+```powershell
+tools\setup_toolchain_windows.ps1
+cmake -B build -G "Visual Studio 17 2022" -A x64 -DTORCH_ROOT="<path it prints>"
+cmake --build build --config Release
+```
+
+### Ad-hoc / dev signing
+
+Windows' equivalent of macOS ad-hoc signing is a self-signed Authenticode
+certificate + `signtool`. `tools/sign_windows_adhoc.ps1` generates a
+"Sprizzle"-subject self-signed cert (reusing it on subsequent runs) and
+signs every `.vst3`/`.dll` it finds under `dist/windows/`. This gives the
+binary a real digital signature naming Sprizzle as the signer - it is
+**not** a substitute for a CA-issued code-signing certificate, and Windows
+SmartScreen will still flag it as an unrecognized publisher on any machine
+that hasn't been told to trust that specific self-signed cert (the script
+prints the steps for that, but doesn't do it automatically, since it
+affects what a machine trusts beyond just this one plugin). This script is
+also unverified for the same reason as the build above.
+
 ## Plugin parameters
 
 | Parameter | Behavior |
@@ -134,9 +171,10 @@ real pretrained checkpoint.
 ## What wasn't possible to verify here, and why
 
 This dev environment is a headless Linux container: no audio device, no DAW
-GUI, and a network policy that blocks Hugging Face, the IRCAM model forum,
-and `download.pytorch.org`. Three things the build brief asks for couldn't
-be done as literally specified:
+GUI, no Windows or macOS machine, and a network policy that blocks Hugging
+Face, the IRCAM model forum, and `download.pytorch.org`. Several things the
+build brief (and follow-up requests) ask for couldn't be done as literally
+specified:
 
 1. **"Load it in a real host and confirm..."** — there is no host/GUI here.
    `tests/offline_render_test.cpp` is an automated proxy: it drives
@@ -148,6 +186,10 @@ be done as literally specified:
 2. **A real pretrained RAVE checkpoint** — unreachable from this network.
    Tested against the synthetic placeholder model instead (see above).
 3. **AU build** — this container is Linux; AU needs macOS/Xcode.
+4. **Windows build/signing** — this container has no Windows machine and no
+   MSVC. See "Windows build" above: the CMake/signing setup is prepared and
+   documented, but has never actually been built, loaded, or signed on
+   Windows.
 
 ## dist/ and runtime dependencies
 

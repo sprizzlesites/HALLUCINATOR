@@ -1,0 +1,45 @@
+# Windows counterpart to tools/setup_toolchain.sh.
+#
+# UNVERIFIED: this whole project was developed in a Linux container with no
+# Windows machine available to actually run this script or build against its
+# output - see README.md's Windows section. It's written from solid platform
+# knowledge (Windows torch wheels are MSVC-ABI, matching a JUCE build made
+# with Visual Studio - no ABI workaround needed here, unlike the Linux
+# script), not from a verified run. Expect to debug it.
+#
+# Unlike this environment's Linux build, a normal Windows dev machine has
+# unrestricted internet access, so this can just use the officially
+# documented CPU wheel index instead of the --no-deps + manual CUDA-shim
+# workaround tools/setup_toolchain.sh needs to route around a blocked
+# download.pytorch.org.
+$ErrorActionPreference = "Stop"
+Set-Location (Split-Path -Parent $PSScriptRoot)
+
+$TorchVersion = "2.4.0"
+
+if (-not (Test-Path "libs\JUCE")) {
+    git clone --depth 1 --branch 8.0.6 https://github.com/juce-framework/JUCE.git libs\JUCE
+}
+
+if (-not (Test-Path "libs\torch-venv")) {
+    python -m venv libs\torch-venv
+    & "libs\torch-venv\Scripts\pip.exe" install --upgrade pip
+    # Genuine CPU-only wheel, no CUDA DLLs at all - this is the clean path
+    # that isn't available in the sandboxed Linux dev environment (that
+    # index is network-blocked there; it almost certainly isn't for you).
+    & "libs\torch-venv\Scripts\pip.exe" install torch==$TorchVersion --index-url https://download.pytorch.org/whl/cpu
+}
+
+$TorchRoot = (Resolve-Path "libs\torch-venv\Lib\site-packages\torch").Path
+Write-Host "Toolchain ready. TORCH_ROOT = $TorchRoot"
+Write-Host ""
+Write-Host "Configure with (from a 'Developer PowerShell for VS' prompt):"
+Write-Host "  cmake -B build -G `"Visual Studio 17 2022`" -A x64 -DTORCH_ROOT=`"$TorchRoot`""
+Write-Host "  cmake --build build --config Release"
+Write-Host ""
+Write-Host "If download.pytorch.org/whl/cpu isn't reachable from your machine either,"
+Write-Host "fall back to the same workaround tools/setup_toolchain.sh uses on Linux:"
+Write-Host "  pip install torch==$TorchVersion --no-deps"
+Write-Host "  # then check `pip show torch` / the wheel's METADATA for exactly which"
+Write-Host "  # nvidia-*-cuXX packages it declares, and install only those - see"
+Write-Host "  # tools/setup_toolchain.sh's comments for the reasoning."
