@@ -22,15 +22,27 @@
       2. Three purpose-built scripted methods: get_sample_rate() -> int,
          get_latent_size() -> int, get_ratio() -> int. This is what
          tools/make_dummy_rave_model.cpp implements.
-      3. The acids-ircam "nn~"-style convention used by real RAVE exports:
-         get_methods() -> List[str] and get_method_params(name) ->
-         List[int] returning [in_channels, in_ratio, out_channels, out_ratio]
-         for a named method. latent_size = out_channels of "encode",
-         ratio = out_ratio of "encode". This is best-effort: it was not
-         possible to verify it against a real exported checkpoint in this
-         environment (no network access to fetch one), so treat it as a
-         starting hypothesis, and prefer the JSON sidecar if it disagrees
-         with what you know about your model.
+      3. The acids-ircam "nn~"-style convention as originally guessed from
+         documentation: get_methods() -> List[str] and
+         get_method_params(name) -> List[int]. Verified against the real
+         acids-ircam VCTK checkpoint (via CI - see
+         tools/dump_model_interface.py) to NOT match: that export has no
+         get_methods()/get_method_params() scripted methods at all. Kept
+         only in case some other real export does use it.
+      4. What the real VCTK checkpoint actually does (see tools/
+         dump_model_interface.py's CI output for how this was found): the
+         loaded module is a thin "Combined" wrapper whose own forward()
+         just delegates to a "_rave" submodule's forward() (== decode(
+         encode(x))) - encode()/decode() themselves only exist as callable
+         methods on that submodule, not on the wrapper (torch::jit::Module
+         ::get_method() finds them there even though Python's dir() doesn't
+         list them - a limitation of Python's introspection, not the
+         module). Metadata comes from encode_params/decode_params buffer
+         tensors on that submodule ([in_channels, in_ratio, out_channels,
+         out_ratio], the same 4 numbers tier 3 hoped to get from a
+         get_method_params() call), and sample rate from a "sampling_rate"
+         buffer/attribute on the same submodule. This checkpoint's decode()
+         also returns 2 channels, not 1 - see decode()'s doc comment.
 
     Encode/decode are called under torch::NoGradGuard and the module is put
     into eval() mode on load, so inference itself is deterministic (no
@@ -53,15 +65,32 @@ public:
     /** audio: [1, 1, ratio] float32 -> latent: [1, latentSize, 1] */
     torch::Tensor encode(const torch::Tensor& audio);
 
-    /** latent: [1, latentSize, 1] -> audio: [1, 1, ratio] float32 */
+    /**
+        latent: [1, latentSize, 1] -> audio: [1, 1, ratio] float32.
+
+        If the underlying model's decode() itself returns more than one
+        channel (confirmed true of the real VCTK checkpoint - see
+        tools/dump_model_interface.py's CI output, decode_params =
+        [8, 2048, 2, 1], i.e. 2 output channels), only channel 0 is kept,
+        to preserve this fixed [1, 1, ratio] contract rather than reworking
+        the whole plugin to be stereo-latent-aware.
+    */
     torch::Tensor decode(const torch::Tensor& latent);
 
 private:
     bool tryLoadSidecarJson(const juce::File& modelFile);
     bool tryPurposeBuiltInterface();
     bool tryNnTildeInterface();
+    bool tryCombinedWrapperInterface();
 
     torch::jit::script::Module module;
+
+    // The module encode()/decode() are actually called on. Equal to
+    // `module` unless tryCombinedWrapperInterface() found that encode/
+    // decode only exist on a submodule (see its doc comment / tier 4
+    // above), in which case this points at that submodule instead.
+    torch::jit::script::Module encodeDecodeModule;
+
     bool loaded = false;
 
     int sampleRate = 44100;

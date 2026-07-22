@@ -76,6 +76,11 @@ namespace
     }
 }
 
-extern "C" PfnDliHook __pfnDliNotifyHook2 = delayLoadNotifyHook;
+// MSVC's own <delayimp.h> declares this extern as `const` (error C2373
+// "redefinition; different type modifiers" if this omits const - confirmed
+// via CI, the first version of this file didn't have it) - matching that
+// exactly is required, not optional, since this overrides a real
+// declaration rather than introducing a fresh symbol.
+extern "C" const PfnDliHook __pfnDliNotifyHook2 = delayLoadNotifyHook;
 
 #endif // _WIN32

@@ -21,10 +21,12 @@ bool RaveModel::load(const juce::File& modelFile, juce::String& errorMessage)
     }
 
     module.eval();
+    encodeDecodeModule = module;
 
     const bool haveMetadata = tryLoadSidecarJson(modelFile)
                                || tryPurposeBuiltInterface()
-                               || tryNnTildeInterface();
+                               || tryNnTildeInterface()
+                               || tryCombinedWrapperInterface();
 
     if (! haveMetadata)
     {
@@ -173,16 +175,67 @@ bool RaveModel::tryNnTildeInterface()
     }
 }
 
+bool RaveModel::tryCombinedWrapperInterface()
+{
+    try
+    {
+        // See tier 4 in this class's doc comment: the real VCTK checkpoint
+        // is a "Combined" wrapper whose own forward() just delegates to a
+        // "_rave" submodule - encode()/decode() only exist there.
+        auto raveSubmodule = module.attr("_rave").toModule();
+
+        auto readIntTensorElement = [](torch::jit::script::Module& m, const char* name, int index) -> int
+        {
+            auto tensor = m.attr(name).toTensor();
+            return (int) tensor[index].item<int64_t>();
+        };
+
+        // [in_channels, in_ratio, out_channels, out_ratio]
+        int encodeOutChannels = readIntTensorElement(raveSubmodule, "encode_params", 2);
+        int encodeOutRatio    = readIntTensorElement(raveSubmodule, "encode_params", 3);
+
+        latentSize = encodeOutChannels;
+        ratio = encodeOutRatio;
+
+        // Best-effort sample rate: stored as a buffer/attribute on the
+        // submodule, not the wrapper. Different exports have been observed
+        // to expose this as either a plain scripted int or a 0-dim tensor,
+        // so handle both rather than assuming one.
+        try
+        {
+            auto ivalue = raveSubmodule.attr("sampling_rate");
+            sampleRate = ivalue.isInt() ? (int) ivalue.toInt() : (int) ivalue.toTensor().item<int64_t>();
+        }
+        catch (const std::exception&)
+        {
+            // Leave sampleRate at its current default; the caller can
+            // still override via the JSON sidecar.
+        }
+
+        encodeDecodeModule = raveSubmodule;
+
+        return true;
+    }
+    catch (const std::exception&)
+    {
+        return false;
+    }
+}
+
 torch::Tensor RaveModel::encode(const torch::Tensor& audio)
 {
     torch::NoGradGuard noGrad;
-    auto result = module.get_method("encode")({ audio });
+    auto result = encodeDecodeModule.get_method("encode")({ audio });
     return result.toTensor();
 }
 
 torch::Tensor RaveModel::decode(const torch::Tensor& latent)
 {
     torch::NoGradGuard noGrad;
-    auto result = module.get_method("decode")({ latent });
-    return result.toTensor();
+    auto result = encodeDecodeModule.get_method("decode")({ latent }).toTensor();
+
+    if (result.dim() == 3 && result.size(1) > 1)
+        result = result.narrow(1, 0, 1);
+
+    return result;
 }
