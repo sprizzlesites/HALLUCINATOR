@@ -65,6 +65,23 @@ jobs:
             "build\HallucinatorRAVE_artefacts\Release\VST3\HallucinatorRAVE.vst3" `
             "dist\windows\"
 
+      - name: Bundle the VCTK model into the plugin package
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Single self-contained download for whoever installs this: the
+          # plugin auto-loads a model sitting at this conventional path
+          # (see HallucinatorAudioProcessor::findBundledDefaultModel) with
+          # no separate "go find and load a model" step. gh CLI talks to
+          # the Releases API directly, sidestepping the presigned-S3-URL
+          # issue that blocks a plain curl/redirect from the project's own
+          # (differently network-policied) Linux dev sandbox.
+          $resourcesDir = "dist\windows\HallucinatorRAVE.vst3\Contents\Resources"
+          New-Item -ItemType Directory -Force -Path $resourcesDir | Out-Null
+          gh release download vctk-rave-model-v1 --repo sprizzlesites/HALLUCINATOR `
+            --pattern "vctk_rave_model.ts" --output "$resourcesDir\default_rave_model.ts" --clobber
+
       - name: Locate signtool (not always on PATH by default on this runner image)
         shell: pwsh
         run: |

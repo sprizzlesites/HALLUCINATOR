@@ -192,6 +192,23 @@ int main(int argc, char** argv)
     auto input = makeTestSignal(sampleRate, durationSeconds);
     juce::File outDir("tests/output");
 
+    // --- bundled-model path arithmetic (option 2 packaging) ------------------
+    // Can't exercise this through the real currentExecutableFile() (this test
+    // binary isn't inside a VST3 bundle), so feed a synthetic path matching
+    // the real layout confirmed in actual Linux/Windows CI build output:
+    // <Name>.vst3/Contents/<arch>-<os>/<binary>.
+    {
+        auto linuxBinary = juce::File("/plugins/HallucinatorRAVE.vst3/Contents/x86_64-linux/HallucinatorRAVE.so");
+        auto expected = juce::File("/plugins/HallucinatorRAVE.vst3/Contents/Resources/default_rave_model.ts");
+        auto resolved = HallucinatorAudioProcessor::findBundledDefaultModel(linuxBinary);
+        check(resolved == expected, "Bundled-model path resolves correctly from a Linux .so layout");
+
+        auto windowsBinary = juce::File("C:/plugins/HallucinatorRAVE.vst3/Contents/x86_64-win/HallucinatorRAVE.vst3");
+        auto expectedWin = juce::File("C:/plugins/HallucinatorRAVE.vst3/Contents/Resources/default_rave_model.ts");
+        auto resolvedWin = HallucinatorAudioProcessor::findBundledDefaultModel(windowsBinary);
+        check(resolvedWin == expectedWin, "Bundled-model path resolves correctly from a Windows layout");
+    }
+
     // --- load model ---------------------------------------------------------
     HallucinatorAudioProcessor proc;
     juce::String err;

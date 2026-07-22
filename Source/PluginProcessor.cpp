@@ -33,12 +33,44 @@ HallucinatorAudioProcessor::HallucinatorAudioProcessor()
     // headlessly / in a fixed studio setup without clicking through a file
     // picker every time. The editor's file picker always takes precedence
     // once the user has chosen something (see setStateInformation).
+    bool autoLoaded = false;
+
     if (auto* envPath = std::getenv("HALLUCINATOR_RAVE_MODEL"))
     {
         juce::File f { juce::String(envPath) };
         juce::String err;
-        loadModel(f, err);
+        autoLoaded = loadModel(f, err);
     }
+
+    // Otherwise, a model bundled alongside the plugin (see
+    // findBundledDefaultModel()) loads with no user action at all - this is
+    // what makes a dist/ package containing both files "unzip and go"
+    // rather than "unzip, then separately go find and load a model".
+    if (! autoLoaded)
+    {
+        auto bundled = findBundledDefaultModel();
+        if (bundled.existsAsFile())
+        {
+            juce::String err;
+            loadModel(bundled, err);
+        }
+    }
+}
+
+juce::File HallucinatorAudioProcessor::findBundledDefaultModel(const juce::File& pluginBinary)
+{
+    // VST3 bundle layout is <Name>.vst3/Contents/<arch>-<os>/<binary>, on
+    // every platform JUCE targets here (including macOS, where the actual
+    // Mach-O binary sits under Contents/MacOS/ rather than a plain OS
+    // "bundle" API return value) - so three levels up from the binary is
+    // always the bundle root, regardless of platform.
+    auto bundleRoot = pluginBinary.getParentDirectory().getParentDirectory().getParentDirectory();
+    return bundleRoot.getChildFile("Contents").getChildFile("Resources").getChildFile("default_rave_model.ts");
+}
+
+juce::File HallucinatorAudioProcessor::findBundledDefaultModel()
+{
+    return findBundledDefaultModel(juce::File::getSpecialLocation(juce::File::currentExecutableFile));
 }
 
 void HallucinatorAudioProcessor::resizeBuffersForRatio(int ratio)

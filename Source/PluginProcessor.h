@@ -99,6 +99,19 @@ public:
         for that many samples). >1 means the plugin is falling behind. */
     float getCpuLoadFraction() const { return cpuLoadFraction.load(std::memory_order_relaxed); }
 
+    /** Looks for a model bundled alongside the plugin binary at
+        <bundle>.vst3/Contents/Resources/default_rave_model.ts, so a dist/
+        package containing both the plugin and a model in that conventional
+        spot self-loads with zero user action. Returns a non-existent File
+        if this isn't running from a recognizable bundle layout, which is
+        harmless - callers just check existsAsFile(). Public (and taking the
+        binary path as a parameter, rather than reading
+        juce::File::getSpecialLocation(currentExecutableFile) internally)
+        purely so this path arithmetic is unit-testable against a synthetic
+        path - see tests/offline_render_test.cpp. */
+    static juce::File findBundledDefaultModel(const juce::File& pluginBinary);
+    static juce::File findBundledDefaultModel();
+
     juce::AudioProcessorValueTreeState apvts;
 
 private:

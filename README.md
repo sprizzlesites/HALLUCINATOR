@@ -95,7 +95,11 @@ available any other way here.
 
 Download the result from the workflow run's "Artifacts" section as a zip
 (`HallucinatorRAVE-windows-vst3.zip`) - it isn't auto-committed into
-`dist/windows/` in this repo.
+`dist/windows/` in this repo. The zip is self-contained: the workflow fetches
+the VCTK model (see below) from its Release and places it inside the plugin
+bundle at `Contents/Resources/default_rave_model.ts` before zipping, and the
+plugin auto-loads a model found there with no user action - unzip, drop the
+`.vst3` where your DAW finds plugins, done. No separate model download step.
 
 ### Manual build (on your own Windows machine with Visual Studio installed)
 
@@ -185,11 +189,11 @@ instead of comb-filtering. The host is told about this delay via
 
 ## Model interface
 
-See `Resources/MODEL_INTERFACE.md` for the full contract, including a JSON
-sidecar override for models whose scripted methods don't match what
-`RaveModel` looks for. Short version: point the plugin at a `.ts` file
-(editor's "Load RAVE Model..." button, or the `HALLUCINATOR_RAVE_MODEL` env
-var for a fixed default) exporting `encode`/`decode`, plus either
+See `Resources/MODEL_INTERFACE.md` for the full contract (including the
+load-priority order: env var, then a model bundled next to the plugin
+binary, then the file picker) and a JSON sidecar override for models whose
+scripted methods don't match what `RaveModel` looks for. Short version:
+point the plugin at a `.ts` file exporting `encode`/`decode`, plus either
 `get_sample_rate()`/`get_latent_size()`/`get_ratio()` or the acids-ircam
 `nn~`-style `get_methods()`/`get_method_params()` convention.
 
@@ -199,6 +203,23 @@ decode) implementing that interface — **not a trained RAVE model, will not
 sound like one** — purely so the plugin's buffering/latency/crossfade/latent
 pipeline could be exercised end-to-end in an environment with no access to a
 real pretrained checkpoint.
+
+### The VCTK pretrained model
+
+A real acids-ircam checkpoint, fetched from
+`https://play.forum.ircam.fr/rave-vst-api/get_model/VCTK` (that host is
+blocked by this dev sandbox's own network policy, same as Hugging Face and
+`download.pytorch.org` - fetched via a one-off CI job instead, see
+`.github/workflows/fetch-vctk-model.yml`). Published as a GitHub Release
+asset (`vctk-rave-model-v1` tag) rather than committed to git - at ~169MB it
+exceeds git's hard 100MB-per-file limit, and Git LFS would work size-wise
+but bills storage/bandwidth separately even on public repos.
+`windows-build.yml` pulls it from that Release and bundles it into the
+packaged zip (see above) so a Windows download is self-contained. **Whether
+`RaveModel`'s nn~-style introspection actually works against this real
+checkpoint out of the box, needs a JSON sidecar, or needs an actual code
+fix has not been confirmed as of this writing** - test it and check
+`Resources/MODEL_INTERFACE.md` if the reported ratio/latent size look wrong.
 
 ## What wasn't possible to verify here, and why
 

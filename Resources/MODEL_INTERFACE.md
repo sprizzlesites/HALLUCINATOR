@@ -1,6 +1,26 @@
 # Model interface HALLUCINATOR expects
 
-HALLUCINATOR loads a torchscript (`.ts`) module and needs three numbers from
+## How a model gets loaded
+
+In priority order, first one found wins:
+
+1. **`HALLUCINATOR_RAVE_MODEL` env var** - an explicit path, for a fixed
+   studio setup or headless use.
+2. **A model bundled next to the plugin binary** at
+   `<Name>.vst3/Contents/Resources/default_rave_model.ts`
+   (`HallucinatorAudioProcessor::findBundledDefaultModel()` in
+   `Source/PluginProcessor.cpp`). This is what makes a `dist/` package
+   "unzip and go" - the Windows CI workflow places the VCTK model there
+   before zipping, so installing the plugin and having a working model are
+   the same single step, not two. The model stays swappable at the code
+   level (it's read from disk at runtime, not compiled in) - this is just
+   automating *where* it's read from by default.
+3. **The editor's "Load RAVE Model..." file picker**, which always takes
+   precedence once used (see `setStateInformation`).
+
+## What HALLUCINATOR needs from the .ts file itself
+
+It loads a torchscript (`.ts`) module and needs three numbers from
 it before it can buffer audio correctly:
 
 - **sample_rate** - the rate the model was trained at
