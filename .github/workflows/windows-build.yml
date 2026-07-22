@@ -1,0 +1,66 @@
+name: Windows VST3 build
+
+# Manual trigger only (Actions tab -> this workflow -> Run workflow), so it
+# never runs as a side effect of a push. Uses a GitHub-hosted windows-latest
+# runner: free/unlimited standard-runner minutes on a public repo, which is
+# the whole point - this project's own dev environment is Linux and can't
+# produce or sign a real Windows binary (see README's Windows section).
+on:
+  workflow_dispatch: {}
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Fetch JUCE + Windows LibTorch
+        shell: pwsh
+        run: tools/setup_toolchain_windows.ps1
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          $torchRoot = (Resolve-Path "libs/torch-venv/Lib/site-packages/torch").Path
+          cmake -B build -G "Visual Studio 17 2022" -A x64 `
+            -DTORCH_ROOT="$torchRoot" `
+            -DHALLUCINATOR_BUILD_TOOLS=OFF
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --config Release --parallel
+
+      - name: Package dist/windows
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist\windows | Out-Null
+          Copy-Item -Recurse -Force `
+            "build\HallucinatorRAVE_artefacts\Release\VST3\HallucinatorRAVE.vst3" `
+            "dist\windows\"
+
+      - name: Locate signtool (not always on PATH by default on this runner image)
+        shell: pwsh
+        run: |
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "\\x64\\" } | Select-Object -First 1
+          if (-not $signtool) { throw "signtool.exe not found under Windows Kits 10" }
+          Write-Host "Found signtool at $($signtool.FullName)"
+          (Split-Path $signtool.FullName) | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Ad-hoc sign (self-signed "Sprizzle" cert, not a CA-trusted signature)
+        shell: pwsh
+        run: tools/sign_windows_adhoc.ps1 -VstPath "dist\windows\HallucinatorRAVE.vst3"
+
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path "dist\windows\HallucinatorRAVE.vst3" -DestinationPath "HallucinatorRAVE-windows-vst3.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HallucinatorRAVE-windows-vst3
+          path: HallucinatorRAVE-windows-vst3.zip
+          retention-days: 14
