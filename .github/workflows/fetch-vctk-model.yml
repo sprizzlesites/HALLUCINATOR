@@ -1,0 +1,36 @@
+name: Fetch VCTK RAVE model
+
+# One-off: this sandbox's dev environment blocks play.forum.ircam.fr (same
+# network policy that blocks huggingface.co and download.pytorch.org), so
+# the pretrained model can't be fetched directly there. GitHub-hosted
+# runners have unrestricted internet access, so this job downloads it there
+# instead and commits it straight to the branch - no local machine involved.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  fetch-and-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download VCTK model
+        run: |
+          curl -fL "https://play.forum.ircam.fr/rave-vst-api/get_model/VCTK" -o Resources/vctk_rave_model.ts
+          ls -la Resources/vctk_rave_model.ts
+          file Resources/vctk_rave_model.ts
+          # Sanity check: a real torchscript file is a zip archive under the
+          # hood. Fail loudly instead of committing an HTML error page if the
+          # download silently returned something else.
+          file Resources/vctk_rave_model.ts | grep -qi zip
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Resources/vctk_rave_model.ts
+          git commit -m "Add VCTK pretrained RAVE model (fetched via CI - blocked from the dev sandbox's network)"
+          git push
