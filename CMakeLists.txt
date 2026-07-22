@@ -69,8 +69,7 @@ target_compile_definitions(HallucinatorRAVE
     PUBLIC
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
-        JUCE_VST3_CAN_REPLACE_VST2=0
-        JUCE_DISPLAY_SPLASH_SCREEN=0)
+        JUCE_VST3_CAN_REPLACE_VST2=0)
 
 target_include_directories(HallucinatorRAVE PRIVATE Source)
 
@@ -147,8 +146,7 @@ if(HALLUCINATOR_BUILD_TOOLS)
     target_compile_definitions(offline_render_test PRIVATE
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
-        JUCE_VST3_CAN_REPLACE_VST2=0
-        JUCE_DISPLAY_SPLASH_SCREEN=0)
+        JUCE_VST3_CAN_REPLACE_VST2=0)
     target_link_libraries(offline_render_test PRIVATE
         juce::juce_audio_utils
         juce::juce_audio_formats
