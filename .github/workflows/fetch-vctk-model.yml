@@ -73,6 +73,18 @@ jobs:
       - name: Download VCTK model
         run: curl -fL "https://play.forum.ircam.fr/rave-vst-api/get_model/VCTK" -o Resources/vctk_rave_model.ts
 
+      - name: Dump real model interface (diagnostic)
+        run: |
+          # RaveModel::tryNnTildeInterface() (Source/RaveModel.cpp) failed to
+          # find metadata on this checkpoint. Rather than guess why, install
+          # a full python torch (this runner has unrestricted network, so
+          # the normal CPU wheel installs fine) and dump exactly what
+          # scripted methods/attributes the real export actually has, so
+          # RaveModel.cpp can be fixed to match instead of relying on an
+          # undocumented guess at the nn~ convention.
+          pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu
+          python3 tools/dump_model_interface.py Resources/vctk_rave_model.ts
+
       - name: Fetch JUCE + LibTorch
         run: tools/setup_toolchain.sh
 
