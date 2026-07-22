@@ -89,14 +89,23 @@ target_link_libraries(HallucinatorRAVE
         juce::juce_recommended_warning_flags)
 
 separate_arguments(TORCH_CXX_FLAGS_LIST UNIX_COMMAND "${TORCH_CXX_FLAGS}")
-target_compile_options(HallucinatorRAVE PRIVATE ${TORCH_CXX_FLAGS_LIST})
 
-# Silence a couple of warnings that fire from JUCE/Torch header interaction
-# on this toolchain (unused parameters in Torch's own headers, and
-# deprecated-copy notices from ATen's Tensor wrapper types pulled in via
-# system headers still get flagged by -Wall on some GCC versions since they
-# originate in macro-expanded code attributed to our translation unit).
-target_compile_options(HallucinatorRAVE PRIVATE -Wno-deprecated-copy)
+# PUBLIC, not PRIVATE: juce_add_plugin() creates a separate HallucinatorRAVE_VST3
+# wrapper target that compiles its own JUCE plugin-client sources and links
+# PRIVATE against this one. A consuming target still needs this target's
+# *interface* compile options to build its own sources consistently - if the
+# ABI define were PRIVATE, HallucinatorRAVE_VST3's JUCE wrapper code would
+# compile with the default (new) ABI while this target's code used the old
+# one, and juce::String (built with two different mangled constructor names)
+# would fail to link - or worse, silently violate the ODR - at the seam
+# between the two targets. This was caught by -flto's ODR checker; the
+# underlying bug exists with or without LTO.
+target_compile_options(HallucinatorRAVE PUBLIC ${TORCH_CXX_FLAGS_LIST})
+
+# -Wno-deprecated-copy is a C++-only flag; JUCE also compiles a couple of C
+# sources (e.g. Sheenbidi) into this target, and GCC warns if a C++-only
+# warning flag is passed while compiling those, so scope it to CXX only.
+target_compile_options(HallucinatorRAVE PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wno-deprecated-copy>)
 
 # Runtime dependencies (libtorch_cpu.so, libc10.so, the cudart/cupti shims
 # libtorch_cpu.so needs to dynamically link even though CUDA is never used)

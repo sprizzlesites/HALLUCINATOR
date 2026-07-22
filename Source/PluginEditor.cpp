@@ -152,9 +152,9 @@ void HallucinatorAudioProcessorEditor::chooseModelFile()
         juce::File(),
         "*.ts");
 
-    auto flags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
+    auto chooserFlags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
 
-    fileChooser->launchAsync(flags, [this](const juce::FileChooser& fc)
+    fileChooser->launchAsync(chooserFlags, [this](const juce::FileChooser& fc)
     {
         auto file = fc.getResult();
         if (! file.existsAsFile())
