@@ -130,10 +130,14 @@ separate_arguments(TORCH_CXX_FLAGS_LIST UNIX_COMMAND "${TORCH_CXX_FLAGS}")
 # underlying bug exists with or without LTO.
 target_compile_options(HallucinatorRAVE PUBLIC ${TORCH_CXX_FLAGS_LIST})
 
-# -Wno-deprecated-copy is a C++-only flag; JUCE also compiles a couple of C
-# sources (e.g. Sheenbidi) into this target, and GCC warns if a C++-only
-# warning flag is passed while compiling those, so scope it to CXX only.
-target_compile_options(HallucinatorRAVE PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wno-deprecated-copy>)
+# -Wno-deprecated-copy is GCC/Clang syntax and doesn't exist for MSVC's
+# cl.exe (which fails outright with "D8021: invalid numeric argument" if
+# handed it - this broke the first successful-configure Windows CI build).
+# Also scoped to CXX only: JUCE compiles a couple of C sources (e.g.
+# Sheenbidi) into this target, and GCC warns if a C++-only warning flag is
+# passed while compiling those.
+target_compile_options(HallucinatorRAVE PRIVATE
+    $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<NOT:$<CXX_COMPILER_ID:MSVC>>>:-Wno-deprecated-copy>)
 
 # Runtime dependencies (libtorch_cpu.so, libc10.so, the cudart/cupti shims
 # libtorch_cpu.so needs to dynamically link even though CUDA is never used)
