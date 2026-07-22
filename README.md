@@ -73,7 +73,31 @@ args so it shows up in the built binary's version-resource properties - but
 none of this has actually been built or run on Windows. Treat it as a
 well-informed starting point, not a tested path.
 
-To build, on an actual Windows machine with Visual Studio installed:
+### GitHub Actions (actually runs on real Windows)
+
+`.github/workflows/windows-build.yml` builds and ad-hoc-signs the plugin on
+a genuine `windows-latest` GitHub-hosted runner - real MSVC, real
+`signtool.exe`, no ABI workaround needed at all (unlike this repo's own
+Linux dev environment). It's manual-trigger only (Actions tab -> this
+workflow -> "Run workflow"), so it never runs as a side effect of a push.
+
+This only exists because the repo is public: GitHub-hosted standard runners
+are free/unlimited on public repos, metered against your plan's quota on
+private ones. If you ever flip this repo private, this workflow would start
+consuming your Actions minutes on every manual run - nothing stops that at
+the YAML level, it's purely GitHub's public/private billing distinction.
+
+Note this workflow exists as a deliberate exception to what would otherwise
+be a firm rule for this project: everything else about HALLUCINATOR was
+built without any CI, by design (see the top-level build brief). This one
+workflow was added specifically because a real Windows machine wasn't
+available any other way here.
+
+Download the result from the workflow run's "Artifacts" section as a zip
+(`HallucinatorRAVE-windows-vst3.zip`) - it isn't auto-committed into
+`dist/windows/` in this repo.
+
+### Manual build (on your own Windows machine with Visual Studio installed)
 
 ```powershell
 tools\setup_toolchain_windows.ps1
