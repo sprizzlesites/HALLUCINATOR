@@ -2,9 +2,19 @@ name: Fetch VCTK RAVE model
 
 # One-off: this sandbox's dev environment blocks play.forum.ircam.fr (same
 # network policy that blocks huggingface.co and download.pytorch.org), so
-# the pretrained model can't be fetched directly there. GitHub-hosted
-# runners have unrestricted internet access, so this job downloads it there
-# instead and commits it straight to the branch - no local machine involved.
+# the pretrained model can't be fetched directly there. GitHub Actions
+# runners aren't network-restricted the same way, so this job downloads it
+# there instead.
+#
+# Published as a GitHub Release asset, NOT committed into the git tree: the
+# file is ~169MB, which is past git's hard 100MB-per-file limit (confirmed -
+# the first version of this workflow tried a plain `git commit` + push and
+# GitHub rejected it: "GH001: Large files detected"). Git LFS would work
+# size-wise, but LFS storage/bandwidth is metered separately from normal git
+# even on public repos (a small free quota, unlike regular git objects which
+# are unlimited on public repos) - every clone or re-download would eat into
+# it. A Release asset has neither constraint (up to 2GB, ordinary bandwidth)
+# while still living in this repository under the Releases tab.
 on:
   workflow_dispatch: {}
 
@@ -12,25 +22,26 @@ permissions:
   contents: write
 
 jobs:
-  fetch-and-commit:
+  fetch-and-publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Download VCTK model
         run: |
-          curl -fL "https://play.forum.ircam.fr/rave-vst-api/get_model/VCTK" -o Resources/vctk_rave_model.ts
-          ls -la Resources/vctk_rave_model.ts
-          file Resources/vctk_rave_model.ts
+          curl -fL "https://play.forum.ircam.fr/rave-vst-api/get_model/VCTK" -o vctk_rave_model.ts
+          ls -la vctk_rave_model.ts
+          file vctk_rave_model.ts
           # Sanity check: a real torchscript file is a zip archive under the
-          # hood. Fail loudly instead of committing an HTML error page if the
+          # hood. Fail loudly instead of publishing an HTML error page if the
           # download silently returned something else.
-          file Resources/vctk_rave_model.ts | grep -qi zip
+          file vctk_rave_model.ts | grep -qi zip
 
-      - name: Commit and push
+      - name: Publish as a GitHub Release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Resources/vctk_rave_model.ts
-          git commit -m "Add VCTK pretrained RAVE model (fetched via CI - blocked from the dev sandbox's network)"
-          git push
+          gh release create vctk-rave-model-v1 vctk_rave_model.ts \
+            --title "VCTK pretrained RAVE model" \
+            --notes "Fetched from https://play.forum.ircam.fr/rave-vst-api/get_model/VCTK via CI - that host is blocked from the project's own dev sandbox network. See Resources/MODEL_INTERFACE.md for how HALLUCINATOR loads this file." \
+            || gh release upload vctk-rave-model-v1 vctk_rave_model.ts --clobber

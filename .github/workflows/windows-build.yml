@@ -22,6 +22,23 @@ jobs:
         shell: pwsh
         run: tools/setup_toolchain_windows.ps1
 
+      - name: Put LibTorch DLLs on PATH
+        shell: pwsh
+        run: |
+          # JUCE's own post-build step (juce_vst3_helper.exe) LoadLibrary()s
+          # the freshly-linked plugin DLL immediately after linking, to
+          # generate its VST3 manifest - before this project's own
+          # DLL-copy-next-to-the-plugin POST_BUILD command gets to run (both
+          # are chained into one command line; JUCE's runs first and this
+          # build failed right there: "LoadLibraryW failed ... The specified
+          # module could not be found" because torch_cpu.dll wasn't
+          # discoverable yet). Windows' DLL search order also checks PATH, so
+          # putting torch's lib dir there up front sidesteps the ordering
+          # entirely rather than fighting over which POST_BUILD command runs
+          # first.
+          $torchLib = (Resolve-Path "libs/torch-venv/Lib/site-packages/torch/lib").Path
+          $torchLib | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
       - name: Set up MSVC dev environment (cl.exe/link.exe on PATH)
         uses: ilammy/msvc-dev-cmd@v1
         with:

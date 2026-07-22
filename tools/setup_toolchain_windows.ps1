@@ -31,7 +31,20 @@ if (-not (Test-Path "libs\torch-venv")) {
 }
 
 $TorchRoot = (Resolve-Path "libs\torch-venv\Lib\site-packages\torch").Path
+$TorchLib = Join-Path $TorchRoot "lib"
+
+# JUCE's own post-build step LoadLibrary()s the freshly-linked plugin DLL
+# right after linking (to generate its VST3 manifest) - before this
+# project's own step that copies torch's DLLs next to the plugin gets to
+# run. That load fails ("The specified module could not be found") unless
+# torch_cpu.dll is already discoverable some other way. Windows' DLL search
+# order also checks PATH, so put torch's lib dir there up front - this is
+# what actually broke the first successful CI compile+link.
+$env:Path = "$TorchLib;$env:Path"
+
 Write-Host "Toolchain ready. TORCH_ROOT = $TorchRoot"
+Write-Host "Added $TorchLib to PATH for this session (re-run this script, or add it"
+Write-Host "yourself, in any new shell - it doesn't persist automatically)."
 Write-Host ""
 Write-Host "Configure with (from a 'Developer PowerShell for VS' prompt, so cl.exe/"
 Write-Host "link.exe/ninja are already on PATH regardless of which VS version you have):"
