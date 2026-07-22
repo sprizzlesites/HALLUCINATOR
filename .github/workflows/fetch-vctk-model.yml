@@ -45,3 +45,19 @@ jobs:
             --title "VCTK pretrained RAVE model" \
             --notes "Fetched from https://play.forum.ircam.fr/rave-vst-api/get_model/VCTK via CI - that host is blocked from the project's own dev sandbox network. See Resources/MODEL_INTERFACE.md for how HALLUCINATOR loads this file." \
             || gh release upload vctk-rave-model-v1 vctk_rave_model.ts --clobber
+
+      # Also uploaded as a workflow-run artifact, transiently: the dev
+      # sandbox's egress proxy returns 401 on the Release asset's presigned
+      # S3 redirect (something about how it MITMs/re-signs the request to
+      # github.com/*.githubusercontent.com breaks AWS's SigV4 validation -
+      # confirmed with a clean curl, no custom headers, straight 401). Run
+      # artifacts are instead fetched by the GitHub MCP server's own
+      # authenticated client, not this sandbox's HTTPS egress, so this is
+      # the only way to get the file into that dev environment for testing
+      # RaveModel against a real checkpoint. Short retention since it's
+      # only needed transiently, not the distribution channel for users.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vctk-rave-model
+          path: vctk_rave_model.ts
+          retention-days: 1
