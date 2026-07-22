@@ -149,6 +149,28 @@ be done as literally specified:
    Tested against the synthetic placeholder model instead (see above).
 3. **AU build** — this container is Linux; AU needs macOS/Xcode.
 
+## dist/ and runtime dependencies
+
+`dist/linux/HallucinatorRAVE.vst3` ships only the ~10MB plugin binary, not
+the ~490MB `libtorch_cpu.so` it dynamically links against. That's a
+deliberate call: bundling it would make the committed bundle load with zero
+extra setup, but a binary that size is easy to add to git history and hard
+to remove later, so the lean version is the default. The plugin's rpath is
+`$ORIGIN` (same directory as the `.so`), so to make a fully self-contained
+copy - e.g. before actually loading it in a host - run:
+
+```sh
+tools/bundle_runtime_deps.sh
+```
+
+This copies `libtorch_cpu.so`, `libc10.so`, `libgomp`, and the two small
+cudart/cupti shim libs from `libs/torch-venv` into
+`dist/linux/HallucinatorRAVE.vst3/Contents/x86_64-linux/` alongside the
+plugin. Verified with `ldd` (see the script's own output) that this resolves
+every torch-related dependency from that one directory with no environment
+variables set - i.e. it would load standalone on a machine that never ran
+`tools/setup_toolchain.sh`. It has not been verified inside an actual DAW.
+
 ## Repo layout
 
 ```

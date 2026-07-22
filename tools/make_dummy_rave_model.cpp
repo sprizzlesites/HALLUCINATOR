@@ -21,7 +21,10 @@ int main(int argc, char** argv)
     torch::jit::Module m("DummyRAVE");
 
     // ratio (2048) must equal latentSize (8) * chunk (256) for the
-    // reshape-based encode/decode below.
+    // reshape-based encode/decode below. decode applies a tanh saturation
+    // so that encode(decode(z)) != z exactly - without some nonlinearity,
+    // this mean-pool/repeat-expand round trip is an exact fixed point,
+    // which would make Feedback Iterations a silent no-op in testing.
     m.define(R"JIT(
 def get_sample_rate(self) -> int:
     return 44100
@@ -40,7 +43,8 @@ def encode(self, x):
 def decode(self, z):
     b = z.shape[0]
     y = z.expand([b, 8, 256])
-    return y.reshape([b, 1, 2048])
+    y = y.reshape([b, 1, 2048])
+    return torch.tanh(y * 1.3)
 )JIT");
 
     m.save(outputPath);
