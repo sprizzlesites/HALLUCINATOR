@@ -22,17 +22,23 @@ jobs:
         shell: pwsh
         run: tools/setup_toolchain_windows.ps1
 
+      - name: Set up MSVC dev environment (cl.exe/link.exe on PATH)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       - name: Configure
         shell: pwsh
         run: |
           $torchRoot = (Resolve-Path "libs/torch-venv/Lib/site-packages/torch").Path
-          cmake -B build -G "Visual Studio 17 2022" -A x64 `
+          cmake -B build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
             -DTORCH_ROOT="$torchRoot" `
             -DHALLUCINATOR_BUILD_TOOLS=OFF
 
       - name: Build
         shell: pwsh
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --parallel
 
       - name: Package dist/windows
         shell: pwsh

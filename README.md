@@ -99,11 +99,19 @@ Download the result from the workflow run's "Artifacts" section as a zip
 
 ### Manual build (on your own Windows machine with Visual Studio installed)
 
+Run from a "Developer PowerShell for VS" prompt (so `cl.exe`/`link.exe`/
+`ninja` are already on PATH):
+
 ```powershell
 tools\setup_toolchain_windows.ps1
-cmake -B build -G "Visual Studio 17 2022" -A x64 -DTORCH_ROOT="<path it prints>"
-cmake --build build --config Release
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTORCH_ROOT="<path it prints>"
+cmake --build build --parallel
 ```
+
+(Not `-G "Visual Studio 17 2022"`: that pins an exact VS version, and
+guessing wrong is exactly what broke the first CI run - "could not find any
+instance of Visual Studio" once GitHub's runner image moved past VS 2022.
+Ninja only needs *some* MSVC toolchain on PATH, not a specific version.)
 
 ### Ad-hoc / dev signing
 
