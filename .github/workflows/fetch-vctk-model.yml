@@ -46,18 +46,44 @@ jobs:
             --notes "Fetched from https://play.forum.ircam.fr/rave-vst-api/get_model/VCTK via CI - that host is blocked from the project's own dev sandbox network. See Resources/MODEL_INTERFACE.md for how HALLUCINATOR loads this file." \
             || gh release upload vctk-rave-model-v1 vctk_rave_model.ts --clobber
 
-      # Also uploaded as a workflow-run artifact, transiently: the dev
-      # sandbox's egress proxy returns 401 on the Release asset's presigned
-      # S3 redirect (something about how it MITMs/re-signs the request to
-      # github.com/*.githubusercontent.com breaks AWS's SigV4 validation -
-      # confirmed with a clean curl, no custom headers, straight 401). Run
-      # artifacts are instead fetched by the GitHub MCP server's own
-      # authenticated client, not this sandbox's HTTPS egress, so this is
-      # the only way to get the file into that dev environment for testing
-      # RaveModel against a real checkpoint. Short retention since it's
-      # only needed transiently, not the distribution channel for users.
-      - uses: actions/upload-artifact@v4
-        with:
-          name: vctk-rave-model
-          path: vctk_rave_model.ts
-          retention-days: 1
+  # Verifies RaveModel against the real checkpoint on THIS runner, rather
+  # than trying to get the 168MB file into the project's own dev sandbox to
+  # test it there. Tried three ways to pull it into that sandbox - the
+  # Release asset's presigned S3 redirect (401, looks like the sandbox's
+  # TLS-terminating proxy interfering with AWS SigV4 signing),
+  # api.github.com's octet-stream asset endpoint (403, direct raw API access
+  # needs an org admin to connect the GitHub App for that sandbox), and a
+  # workflow-artifact's presigned Azure Blob URL (403, that host isn't on
+  # the sandbox's egress allowlist at all). All blocked for different
+  # reasons; running the test here instead sidesteps needing the binary to
+  # leave GitHub's infrastructure at all - only the pass/fail text log does.
+  test-against-real-model:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libfreetype6-dev libasound2-dev \
+            libcurl4-openssl-dev libfontconfig1-dev libxrandr-dev libxinerama-dev \
+            libxcursor-dev libxext-dev libxcomposite-dev mesa-common-dev \
+            libgl1-mesa-dev pkg-config ninja-build
+
+      - name: Download VCTK model
+        run: curl -fL "https://play.forum.ircam.fr/rave-vst-api/get_model/VCTK" -o Resources/vctk_rave_model.ts
+
+      - name: Fetch JUCE + LibTorch
+        run: tools/setup_toolchain.sh
+
+      - name: Configure + build offline_render_test
+        run: |
+          # Unquoted glob (not a python -c import) since a plain `import
+          # torch` doesn't work in this venv either - see
+          # tools/setup_toolchain.sh's comments on the CUDA-shim workaround.
+          TORCH_ROOT=$(echo "$(pwd)"/libs/torch-venv/lib/python3.*/site-packages/torch)
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTORCH_ROOT="$TORCH_ROOT"
+          cmake --build build --target offline_render_test --parallel
+
+      - name: Run against the real VCTK checkpoint
+        run: ./build/offline_render_test Resources/vctk_rave_model.ts
