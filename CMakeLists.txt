@@ -149,18 +149,35 @@ if(UNIX AND NOT APPLE)
         INSTALL_RPATH "$ORIGIN")
 endif()
 
-# Windows has no rpath mechanism - the standard DLL search order checks the
-# directory the loading module lives in first, so copying torch's .dlls next
-# to the built .vst3 achieves the same self-contained-next-to-the-plugin
-# effect that $ORIGIN gives on Linux above. UNVERIFIED: this project has
-# never actually been built on Windows (this repo was developed in a Linux
-# container with no Windows machine available) - if torch's DLL set differs
-# from what file(GLOB ...) above picked up, add the missing ones here.
+# Windows has no rpath mechanism, and - unlike what $ORIGIN achieves on Linux
+# above - copying torch's .dlls next to the built .vst3 does NOT make them
+# findable on its own: Windows' standard DLL search order for a *dependent*
+# DLL only checks the hosting process's own directory (e.g. the DAW's .exe
+# folder) and PATH, never "the directory the requesting DLL itself lives
+# in". That gap is invisible in this project's own dev/CI loop (which
+# happens to put torch's lib dir on PATH for its own build/test
+# convenience) but reproduces as a hard failure to load under a real DAW
+# hosting the plugin from its own install location - confirmed via a user
+# report of FL Studio showing a generic scan "error" (no vendor/category)
+# because the plugin DLL itself never finished loading.
+#
+# Fixed via delay-loading (see Source/Windows/DelayLoadHook.cpp): torch_cpu
+# and c10 are the only two DLLs this project directly imports, so they're
+# the only two that need a /DELAYLOAD entry - the hook resolves each by
+# absolute path with LOAD_WITH_ALTERED_SEARCH_PATH, which also makes the
+# loader use that same directory for their own further dependencies (e.g.
+# c10.dll's own imports, or anything else in torch's lib/ folder), so the
+# fix cascades without needing a /DELAYLOAD entry per file.
 if(WIN32)
     add_custom_command(TARGET HallucinatorRAVE_VST3 POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${TORCH_RUNTIME_DLLS}
                 $<TARGET_FILE_DIR:HallucinatorRAVE_VST3>
         COMMENT "Copying LibTorch runtime DLLs next to HallucinatorRAVE.vst3")
+
+    target_sources(HallucinatorRAVE_VST3 PRIVATE Source/Windows/DelayLoadHook.cpp)
+    target_link_options(HallucinatorRAVE_VST3 PRIVATE
+        "/DELAYLOAD:torch_cpu.dll" "/DELAYLOAD:c10.dll")
+    target_link_libraries(HallucinatorRAVE_VST3 PRIVATE delayimp.lib)
 endif()
 
 # -----------------------------------------------------------------------------

@@ -95,6 +95,39 @@ jobs:
         shell: pwsh
         run: tools/sign_windows_adhoc.ps1 -VstPath "dist\windows\HallucinatorRAVE.vst3"
 
+      - name: Verify plugin loads from an isolated directory (DLL search-path smoke test)
+        shell: pwsh
+        run: |
+          # Regression test for a real bug report: FL Studio showed a
+          # generic scan "error" (no vendor name, no effect/synth category,
+          # never got a chance to open the UI) because the plugin DLL
+          # itself failed to load - Windows' DLL search order for a
+          # *dependent* DLL only checks the hosting process's own
+          # directory and PATH, never "the directory the requesting DLL
+          # lives in", so torch_cpu.dll/c10.dll sitting next to the plugin
+          # binary were invisible to any host that isn't this CI job (which
+          # had put torch's lib dir on PATH for its own build/test
+          # convenience - see "Put LibTorch DLLs on PATH" above). Fixed via
+          # /DELAYLOAD + Source/Windows/DelayLoadHook.cpp. This step copies
+          # the signed bundle to an unrelated directory, strips PATH down
+          # to just the OS defaults, and loads the actual plugin binary via
+          # LoadLibraryW - simulating exactly what a real DAW does.
+          $isolated = "C:\isolated_plugin_test"
+          New-Item -ItemType Directory -Force -Path $isolated | Out-Null
+          Copy-Item -Recurse -Force "dist\windows\HallucinatorRAVE.vst3" "$isolated\"
+          $env:Path = "$env:SystemRoot\System32;$env:SystemRoot"
+
+          $sig = 'using System; using System.Runtime.InteropServices; namespace W32 { public static class N { [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern IntPtr LoadLibraryW(string lpFileName); } }'
+          Add-Type -TypeDefinition $sig
+
+          $dllPath = Join-Path $isolated "HallucinatorRAVE.vst3\Contents\x86_64-win\HallucinatorRAVE.vst3"
+          $handle = [W32.N]::LoadLibraryW($dllPath)
+          if ($handle -eq [IntPtr]::Zero) {
+              $err = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+              throw "LoadLibraryW failed (Win32 error $err) loading the plugin from an isolated directory with a clean PATH - this is exactly the failure mode reported under FL Studio. torch_cpu.dll/c10.dll are not being found."
+          }
+          Write-Host "Plugin binary loaded successfully from an isolated directory with a clean PATH."
+
       - name: Zip
         shell: pwsh
         run: Compress-Archive -Path "dist\windows\HallucinatorRAVE.vst3" -DestinationPath "HallucinatorRAVE-windows-vst3.zip"
