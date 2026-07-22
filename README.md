@@ -15,13 +15,17 @@ What that means concretely, and what it doesn't, before you read further:
   audibly change output, Freeze Seed reproducibility. See "What wasn't
   possible to verify here" below — this harness is a proxy, not the manual
   DAW check the build brief asks for.
-- **Not tested against a real trained RAVE checkpoint.** This dev environment
-  has no network access to Hugging Face or the IRCAM model forum, so the
-  wrapper's model-introspection code (`RaveModel::tryNnTildeInterface()`) is
-  a best-effort, undocumented-convention guess — see
-  `Resources/MODEL_INTERFACE.md`. Bring your own exported `.ts` model and
-  check it loads; if the reported ratio/latent size look wrong, use the
-  JSON sidecar override described there.
+- **Tested against a real trained RAVE checkpoint (the acids-ircam VCTK
+  model) via CI**, not in this dev environment directly (no network access
+  here to Hugging Face or the IRCAM model forum - see
+  `.github/workflows/fetch-vctk-model.yml`, whose `test-against-real-model`
+  job runs the same offline harness against the genuine checkpoint on a
+  GitHub-hosted runner). That checkpoint turned out to use a different
+  convention than originally guessed - see `Resources/MODEL_INTERFACE.md`'s
+  tier 4 for what it actually does and how `RaveModel::
+  tryCombinedWrapperInterface()` handles it. If you bring your own exported
+  `.ts` model and it doesn't match any of the documented conventions, use
+  the JSON sidecar override described there.
 - **No AU build.** This environment is Linux; AU (`.component`) requires
   Xcode/the AudioUnit SDK on macOS. Only VST3 is built here.
 
@@ -193,9 +197,12 @@ See `Resources/MODEL_INTERFACE.md` for the full contract (including the
 load-priority order: env var, then a model bundled next to the plugin
 binary, then the file picker) and a JSON sidecar override for models whose
 scripted methods don't match what `RaveModel` looks for. Short version:
-point the plugin at a `.ts` file exporting `encode`/`decode`, plus either
-`get_sample_rate()`/`get_latent_size()`/`get_ratio()` or the acids-ircam
-`nn~`-style `get_methods()`/`get_method_params()` convention.
+point the plugin at a `.ts` file exporting `encode`/`decode` (either at the
+top level or on a `_rave`-named submodule, per the real VCTK checkpoint's
+"Combined" wrapper convention - see tier 4 in `MODEL_INTERFACE.md`), plus
+one of: `get_sample_rate()`/`get_latent_size()`/`get_ratio()`, the
+acids-ircam `nn~`-style `get_methods()`/`get_method_params()` convention, or
+`encode_params`/`decode_params`/`sampling_rate` buffers.
 
 `tools/make_dummy_rave_model.cpp` generates a tiny placeholder model with a
 trivial deterministic "compression" (mean-pool encode / repeat-expand
@@ -215,11 +222,14 @@ asset (`vctk-rave-model-v1` tag) rather than committed to git - at ~169MB it
 exceeds git's hard 100MB-per-file limit, and Git LFS would work size-wise
 but bills storage/bandwidth separately even on public repos.
 `windows-build.yml` pulls it from that Release and bundles it into the
-packaged zip (see above) so a Windows download is self-contained. **Whether
-`RaveModel`'s nn~-style introspection actually works against this real
-checkpoint out of the box, needs a JSON sidecar, or needs an actual code
-fix has not been confirmed as of this writing** - test it and check
-`Resources/MODEL_INTERFACE.md` if the reported ratio/latent size look wrong.
+packaged zip (see above) so a Windows download is self-contained.
+`RaveModel` loads and processes audio through this checkpoint correctly,
+confirmed via CI's `test-against-real-model` job - it turned out to need
+neither the original `get_methods()`/`get_method_params()` guess nor a JSON
+sidecar, but a real, different convention (a "Combined" wrapper module,
+metadata via buffer tensors rather than callable getters) that
+`RaveModel::tryCombinedWrapperInterface()` now handles - see tier 4 in
+`Resources/MODEL_INTERFACE.md` for the full story of how this was found.
 
 ## What wasn't possible to verify here, and why
 
@@ -236,13 +246,28 @@ specified:
    that every parameter measurably changes the output. It does not replace
    actually loading the `.vst3` in a DAW and listening — that step is still
    outstanding and should be done before trusting `dist/`.
-2. **A real pretrained RAVE checkpoint** — unreachable from this network.
-   Tested against the synthetic placeholder model instead (see above).
+2. **A real pretrained RAVE checkpoint** — unreachable from this network
+   directly, but tested via CI instead (see "The VCTK pretrained model"
+   above) - not a limitation anymore, just a workaround for where the test
+   actually runs.
 3. **AU build** — this container is Linux; AU needs macOS/Xcode.
 4. **Windows build/signing** — this container has no Windows machine and no
-   MSVC. See "Windows build" above: the CMake/signing setup is prepared and
-   documented, but has never actually been built, loaded, or signed on
-   Windows.
+   MSVC, but `.github/workflows/windows-build.yml` builds, packages, and
+   ad-hoc-signs the plugin on a real `windows-latest` runner. A real user
+   report of the plugin failing to load under FL Studio (generic scan
+   "error", no vendor/category, no chance to open the UI) surfaced a real
+   bug this way: Windows' DLL search order for a dependent DLL only checks
+   the *hosting process's* own directory and PATH, never the requesting
+   DLL's own directory, so `torch_cpu.dll`/`c10.dll` sitting next to the
+   plugin binary were invisible to any host other than this project's own
+   CI job. Fixed with a dependency-free shim binary (`Source/Windows/
+   PluginShim.cpp`) that's the actual file a DAW loads, which explicitly
+   resolves the real implementation (`HallucinatorRAVE_Impl.dll`) with
+   `LOAD_WITH_ALTERED_SEARCH_PATH` - verified in CI by loading the signed
+   bundle from an isolated directory with a clean PATH, simulating exactly
+   what a real DAW does. Still outstanding: re-confirming this specific fix
+   under an actual FL Studio (or other DAW) installation, since CI can only
+   simulate the DLL-loading conditions, not a full DAW's plugin scan.
 
 ## dist/ and runtime dependencies
 

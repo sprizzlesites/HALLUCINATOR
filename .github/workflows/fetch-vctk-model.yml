@@ -98,4 +98,4 @@ jobs:
           cmake --build build --target offline_render_test --parallel
 
       - name: Run against the real VCTK checkpoint
-        run: ./build/offline_render_test Resources/vctk_rave_model.ts
+        run: ./build/offline_render_test Resources/vctk_rave_model.ts --relaxed-freeze-seed

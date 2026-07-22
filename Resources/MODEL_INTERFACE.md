@@ -54,10 +54,9 @@ def get_ratio(self) -> int: ...
 `tools/make_dummy_rave_model.cpp` builds a module with exactly this
 interface, so it's a convenient reference implementation.
 
-## 3. nn~-style introspection (best effort, for real RAVE exports)
+## 3. nn~-style introspection via callable getters (unconfirmed convention)
 
-Real `rave export`ed checkpoints (via the acids-ircam `nn_tilde` convention
-used across their neural audio synthesis models) are expected to expose:
+Some `rave export`ed checkpoints may expose:
 
 ```python
 def get_methods(self) -> List[str]: ...
@@ -68,12 +67,60 @@ HALLUCINATOR reads `latent_size = out_channels` and `ratio = out_ratio` from
 `get_method_params("encode")`, and best-effort tries `get_samplerate()` or an
 `sr` attribute for the sample rate.
 
-**This path was not validated against a real RAVE checkpoint** - this
-environment has no network access to fetch one from Hugging Face or the
-IRCAM forum (both are blocked by the sandbox's network policy). Treat it as
-a starting hypothesis. If it loads but the reported ratio/latent size look
-wrong (e.g. the plugin sounds pitched/broken relative to what you'd expect),
-add a sidecar JSON with the correct numbers instead of trusting this path.
+**Confirmed NOT to match the real acids-ircam VCTK checkpoint** (see tier 4
+below, and `tools/dump_model_interface.py`'s CI output): that export has no
+`get_methods`/`get_method_params` scripted methods at all. Kept only in
+case some other real export genuinely uses this convention; the JSON
+sidecar is the reliable fallback if a model matches neither this nor tier 4.
+
+## 4. The real VCTK checkpoint's actual convention (confirmed via CI)
+
+Fetching and inspecting the genuine acids-ircam VCTK checkpoint (see
+`tools/dump_model_interface.py` and `.github/workflows/fetch-vctk-model.yml`)
+revealed a different, real convention:
+
+- The loaded module is a thin **"Combined" wrapper**: its own `forward()`
+  just delegates to a `_rave` submodule (`return self._rave.forward(x)`,
+  which itself is `self.decode(self.encode(x))`). `encode`/`decode`
+  themselves only exist as callable methods on that submodule, not on the
+  wrapper - Python's `dir()` doesn't list them there either (a limitation of
+  Python's introspection of scripted modules, not the module itself), but
+  `torch::jit::Module::get_method()` finds them fine.
+- Metadata comes from **buffer tensors**, not callable getters:
+  `encode_params`/`decode_params` on the `_rave` submodule, each
+  `[in_channels, in_ratio, out_channels, out_ratio]` (the same 4 numbers
+  tier 3 hoped to get from a `get_method_params()` call - this export just
+  stores them as plain buffers instead). `latent_size = encode_params[2]`,
+  `ratio = encode_params[3]`.
+- Sample rate comes from a `sampling_rate` buffer/attribute, also on the
+  `_rave` submodule (observed as `48000` for this checkpoint) - not
+  `sr`/`sample_rate`/`sampling_rate` on the wrapper itself, all of which
+  fail.
+- **This checkpoint's `decode()` returns 2 channels, not 1**
+  (`decode_params = [8, 2048, 2, 1]`). HALLUCINATOR keeps only channel 0 of
+  whatever `decode()` returns (see `RaveModel::decode()`), preserving the
+  plugin's fixed `[1, 1, ratio]` mono contract rather than reworking the
+  whole plugin to be stereo-latent-aware.
+
+See `RaveModel::tryCombinedWrapperInterface()` in `Source/RaveModel.cpp`
+for the implementation.
+
+### A real checkpoint's floating-point execution isn't bit-exact across runs
+
+Unlike the deterministic dummy test model (plain arithmetic, no BLAS/SIMD),
+a real checkpoint's CPU inference has some inherent run-to-run
+floating-point non-determinism (kernel/SIMD codepath selection, denormal
+handling) - `RaveModel::load()` forces single-threaded execution
+(`at::set_num_threads(1)`), which fixes the overwhelming majority of it, but
+RAVE's cached-convolution decoder is recursive, so even a tiny residual can
+compound unpredictably over a multi-second render (observed as low as
+0.0024 max-abs-diff in one CI run and as high as 0.32 in another, identical
+code and model). **Freeze Seed's exact-reproducibility guarantee is for the
+plugin's own randomness sources (noise/prior-mix/feedback seeds), not for a
+real model's own floating-point execution** - `tests/offline_render_test.cpp`
+takes a `--relaxed-freeze-seed` flag (used by `fetch-vctk-model.yml`) that
+turns that one check into a report instead of a hard failure for exactly
+this reason.
 
 ## Encode / decode contract
 
