@@ -108,25 +108,43 @@ jobs:
           # binary were invisible to any host that isn't this CI job (which
           # had put torch's lib dir on PATH for its own build/test
           # convenience - see "Put LibTorch DLLs on PATH" above). Fixed via
-          # /DELAYLOAD + Source/Windows/DelayLoadHook.cpp. This step copies
-          # the signed bundle to an unrelated directory, strips PATH down
-          # to just the OS defaults, and loads the actual plugin binary via
-          # LoadLibraryW - simulating exactly what a real DAW does.
+          # a dependency-free shim (Source/Windows/PluginShim.cpp) that
+          # explicitly loads the real implementation with
+          # LOAD_WITH_ALTERED_SEARCH_PATH.
+          #
+          # This step copies the signed bundle to an unrelated directory,
+          # strips PATH down to just the OS defaults, loads the actual
+          # plugin binary via LoadLibraryW, and - since the shim itself has
+          # no torch dependency and would load trivially either way - also
+          # calls GetPluginFactory() to force it to load the real impl DLL,
+          # so this test actually exercises the fix rather than just
+          # proving the lightweight shim loads.
           $isolated = "C:\isolated_plugin_test"
           New-Item -ItemType Directory -Force -Path $isolated | Out-Null
           Copy-Item -Recurse -Force "dist\windows\HallucinatorRAVE.vst3" "$isolated\"
           $env:Path = "$env:SystemRoot\System32;$env:SystemRoot"
 
-          $sig = 'using System; using System.Runtime.InteropServices; namespace W32 { public static class N { [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern IntPtr LoadLibraryW(string lpFileName); } }'
+          $sig = 'using System; using System.Runtime.InteropServices; namespace W32 { public static class N { [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern IntPtr LoadLibraryW(string lpFileName); [DllImport("kernel32.dll", CharSet = CharSet.Ansi, SetLastError = true)] public static extern IntPtr GetProcAddress(IntPtr hModule, string procName); } }'
           Add-Type -TypeDefinition $sig
 
           $dllPath = Join-Path $isolated "HallucinatorRAVE.vst3\Contents\x86_64-win\HallucinatorRAVE.vst3"
           $handle = [W32.N]::LoadLibraryW($dllPath)
           if ($handle -eq [IntPtr]::Zero) {
               $err = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
-              throw "LoadLibraryW failed (Win32 error $err) loading the plugin from an isolated directory with a clean PATH - this is exactly the failure mode reported under FL Studio. torch_cpu.dll/c10.dll are not being found."
+              throw "LoadLibraryW failed (Win32 error $err) loading the plugin shim from an isolated directory with a clean PATH."
           }
-          Write-Host "Plugin binary loaded successfully from an isolated directory with a clean PATH."
+          Write-Host "Plugin shim loaded successfully from an isolated directory with a clean PATH."
+
+          $factoryProc = [W32.N]::GetProcAddress($handle, "GetPluginFactory")
+          if ($factoryProc -eq [IntPtr]::Zero) {
+              throw "GetProcAddress(GetPluginFactory) failed - the shim binary doesn't export the expected VST3 entry point."
+          }
+          $factoryDelegate = [System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer($factoryProc, [Func[IntPtr]])
+          $factory = $factoryDelegate.Invoke()
+          if ($factory -eq [IntPtr]::Zero) {
+              throw "GetPluginFactory() returned null - this is exactly the failure mode reported under FL Studio: the shim loaded, but forwarding to the real implementation (HallucinatorRAVE_Impl.dll, which statically imports torch_cpu.dll/c10.dll) failed, meaning those still aren't being found from an isolated directory with a clean PATH."
+          }
+          Write-Host "GetPluginFactory() succeeded - the real implementation (with its torch dependency) loaded correctly via the shim."
 
       - name: Zip
         shell: pwsh

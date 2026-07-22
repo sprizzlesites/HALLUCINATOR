@@ -1,4 +1,5 @@
 #include "RaveModel.h"
+#include <ATen/Parallel.h>
 
 bool RaveModel::load(const juce::File& modelFile, juce::String& errorMessage)
 {
@@ -19,6 +20,20 @@ bool RaveModel::load(const juce::File& modelFile, juce::String& errorMessage)
         errorMessage = "Failed to load torchscript model: " + juce::String(e.what());
         return false;
     }
+
+    // libtorch's CPU backend defaults to multi-threaded intra-op
+    // parallelism, which is not bit-reproducible run to run (thread
+    // scheduling affects floating-point reduction order in conv/matmul
+    // kernels) - invisible with the tiny dummy test model (too small to
+    // trigger multi-threaded codepaths) but real on the actual VCTK
+    // checkpoint, where it was the remaining cause of Freeze Seed
+    // reproducibility failing even after fixing cached-conv state
+    // persistence above. Forcing single-threaded execution trades some
+    // throughput for the exact reproducibility Freeze Seed promises - RAVE
+    // models are specifically designed to run in real time on CPU even
+    // single-threaded, so this is a reasonable default rather than a
+    // reckless one.
+    at::set_num_threads(1);
 
     module.eval();
     encodeDecodeModule = module;

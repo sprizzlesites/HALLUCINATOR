@@ -161,30 +161,40 @@ endif()
 # report of FL Studio showing a generic scan "error" (no vendor/category)
 # because the plugin DLL itself never finished loading.
 #
-# Fixed via delay-loading (see Source/Windows/DelayLoadHook.cpp): torch_cpu
-# and c10 are the only two DLLs this project directly imports. Only
-# torch_cpu.dll gets a /DELAYLOAD entry, though - c10.dll CANNOT be
-# delay-loaded at all: MSVC's linker refuses outright (LNK1194 "cannot
-# delay-load 'c10.dll' due to import of data symbol ...") because delay
-# loading only supports deferring function calls, never raw data-symbol
-# access, and c10.dll exports at least one data symbol our code pulls in
-# transitively via torch's headers - confirmed via CI, this is a hard,
-# unconditional MSVC restriction with no per-symbol workaround available.
-# c10.dll is also a dependency of torch_cpu.dll itself, though, so loading
-# torch_cpu.dll via our hook with LOAD_WITH_ALTERED_SEARCH_PATH should
-# already make the loader search that same directory for c10.dll too as
-# part of resolving torch_cpu.dll's own imports - the isolated-directory
-# smoke test in windows-build.yml is what actually confirms whether that
-# holds in practice, rather than trusting this reasoning alone.
+# A first attempt fixed this via delay-loading (see git history), but hit a
+# hard MSVC limitation: c10.dll exports a data symbol, and delay-loading can
+# only defer function calls, never raw data-symbol access (LNK1194 "cannot
+# delay-load 'c10.dll' due to import of data symbol ...") - confirmed via
+# CI's isolated-directory smoke test, dropping c10.dll's /DELAYLOAD entry
+# just reproduced the original failure for c10.dll specifically.
+#
+# Fixed instead with a dependency-free "shim" binary (Source/Windows/
+# PluginShim.cpp) that IS the file a DAW's LoadLibraryW() resolves at
+# Contents/x86_64-win/HallucinatorRAVE.vst3: it explicitly LoadLibraryExW's
+# the real implementation (renamed below to HallucinatorRAVE_Impl.dll) with
+# LOAD_WITH_ALTERED_SEARCH_PATH, which makes the loader search that same
+# directory for every one of the impl DLL's imports - function or data -
+# as ordinary PE loading, not delay-load's more limited mechanism. The
+# shim itself has zero torch/JUCE dependencies, so its own load always
+# succeeds regardless of the host's search path.
 if(WIN32)
+    add_library(HallucinatorRAVE_Shim MODULE Source/Windows/PluginShim.cpp)
+    set_target_properties(HallucinatorRAVE_Shim PROPERTIES OUTPUT_NAME "HallucinatorRAVE_Shim")
+
     add_custom_command(TARGET HallucinatorRAVE_VST3 POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${TORCH_RUNTIME_DLLS}
                 $<TARGET_FILE_DIR:HallucinatorRAVE_VST3>
         COMMENT "Copying LibTorch runtime DLLs next to HallucinatorRAVE.vst3")
 
-    target_sources(HallucinatorRAVE_VST3 PRIVATE Source/Windows/DelayLoadHook.cpp)
-    target_link_options(HallucinatorRAVE_VST3 PRIVATE "/DELAYLOAD:torch_cpu.dll")
-    target_link_libraries(HallucinatorRAVE_VST3 PRIVATE delayimp.lib)
+    add_custom_command(TARGET HallucinatorRAVE_VST3 POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E rename
+                $<TARGET_FILE:HallucinatorRAVE_VST3>
+                $<TARGET_FILE_DIR:HallucinatorRAVE_VST3>/HallucinatorRAVE_Impl.dll
+        COMMAND ${CMAKE_COMMAND} -E copy
+                $<TARGET_FILE:HallucinatorRAVE_Shim>
+                $<TARGET_FILE:HallucinatorRAVE_VST3>
+        COMMENT "Renaming the real plugin binary to HallucinatorRAVE_Impl.dll and installing the dependency-free shim in its place"
+        DEPENDS HallucinatorRAVE_Shim)
 endif()
 
 # -----------------------------------------------------------------------------
