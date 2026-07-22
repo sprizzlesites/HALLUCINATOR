@@ -162,12 +162,20 @@ endif()
 # because the plugin DLL itself never finished loading.
 #
 # Fixed via delay-loading (see Source/Windows/DelayLoadHook.cpp): torch_cpu
-# and c10 are the only two DLLs this project directly imports, so they're
-# the only two that need a /DELAYLOAD entry - the hook resolves each by
-# absolute path with LOAD_WITH_ALTERED_SEARCH_PATH, which also makes the
-# loader use that same directory for their own further dependencies (e.g.
-# c10.dll's own imports, or anything else in torch's lib/ folder), so the
-# fix cascades without needing a /DELAYLOAD entry per file.
+# and c10 are the only two DLLs this project directly imports. Only
+# torch_cpu.dll gets a /DELAYLOAD entry, though - c10.dll CANNOT be
+# delay-loaded at all: MSVC's linker refuses outright (LNK1194 "cannot
+# delay-load 'c10.dll' due to import of data symbol ...") because delay
+# loading only supports deferring function calls, never raw data-symbol
+# access, and c10.dll exports at least one data symbol our code pulls in
+# transitively via torch's headers - confirmed via CI, this is a hard,
+# unconditional MSVC restriction with no per-symbol workaround available.
+# c10.dll is also a dependency of torch_cpu.dll itself, though, so loading
+# torch_cpu.dll via our hook with LOAD_WITH_ALTERED_SEARCH_PATH should
+# already make the loader search that same directory for c10.dll too as
+# part of resolving torch_cpu.dll's own imports - the isolated-directory
+# smoke test in windows-build.yml is what actually confirms whether that
+# holds in practice, rather than trusting this reasoning alone.
 if(WIN32)
     add_custom_command(TARGET HallucinatorRAVE_VST3 POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${TORCH_RUNTIME_DLLS}
@@ -175,8 +183,7 @@ if(WIN32)
         COMMENT "Copying LibTorch runtime DLLs next to HallucinatorRAVE.vst3")
 
     target_sources(HallucinatorRAVE_VST3 PRIVATE Source/Windows/DelayLoadHook.cpp)
-    target_link_options(HallucinatorRAVE_VST3 PRIVATE
-        "/DELAYLOAD:torch_cpu.dll" "/DELAYLOAD:c10.dll")
+    target_link_options(HallucinatorRAVE_VST3 PRIVATE "/DELAYLOAD:torch_cpu.dll")
     target_link_libraries(HallucinatorRAVE_VST3 PRIVATE delayimp.lib)
 endif()
 

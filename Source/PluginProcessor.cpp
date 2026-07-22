@@ -135,6 +135,21 @@ void HallucinatorAudioProcessor::prepareToPlay(double sampleRate, int /*samplesP
 
     if (raveModel.isLoaded())
     {
+        // Real streaming RAVE exports carry internal cached-convolution
+        // state across encode()/decode() calls (see Resources/
+        // MODEL_INTERFACE.md's "Encode / decode contract"). Reseeding the
+        // RNG alone isn't enough for Freeze Seed reproducibility across two
+        // prepareToPlay() calls if that leftover state survives between
+        // them - invisible with the stateless dummy test model, but real
+        // and confirmed via CI against the actual VCTK checkpoint.
+        // Reloading from disk resets it deterministically (same file, same
+        // starting state every time), matching what "prepare to play again"
+        // should mean.
+        juce::String reloadError;
+        RaveModel reloaded;
+        if (reloaded.load(juce::File(loadedModelPath), reloadError))
+            raveModel = std::move(reloaded);
+
         latentEngine.prepare(raveModel.getLatentSize());
 
         const bool deterministic = pFreezeSeed != nullptr && pFreezeSeed->load() > 0.5f;
