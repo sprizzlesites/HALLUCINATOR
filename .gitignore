@@ -1,0 +1,7 @@
+build/
+libs/JUCE/
+libs/torch-venv/
+tests/output/
+*.o
+*.pyc
+__pycache__/
