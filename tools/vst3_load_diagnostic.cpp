@@ -122,6 +122,63 @@ namespace
             return false;
         }
     }
+
+    // Every DLL HallucinatorRAVE ships lives in one folder; rather than
+    // parse HallucinatorRAVE_Impl.dll's PE import table to figure out
+    // exactly which of its (possibly transitive) dependencies is
+    // unresolvable, just try loading every *.dll in that same folder
+    // individually - whichever ones fail standalone (even with the same
+    // LOAD_WITH_ALTERED_SEARCH_PATH the shim itself uses) are the direct
+    // answer to "which specific file can't load on this machine".
+    bool tryLoadSingleDll(const wchar_t* fullPath, DWORD& outErrorOrExceptionCode)
+    {
+        __try
+        {
+            HMODULE h = LoadLibraryExW(fullPath, nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+            if (h == nullptr)
+            {
+                outErrorOrExceptionCode = GetLastError();
+                return false;
+            }
+            FreeLibrary(h);
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            outErrorOrExceptionCode = GetExceptionCode();
+            return false;
+        }
+    }
+}
+
+void checkAllDllsInDirectory(const std::wstring& dir)
+{
+    std::wstring pattern = dir + L"\\*.dll";
+    WIN32_FIND_DATAW findData {};
+    HANDLE find = FindFirstFileW(pattern.c_str(), &findData);
+    if (find == INVALID_HANDLE_VALUE)
+    {
+        std::cout << "[FAIL] Could not enumerate *.dll in " << std::endl;
+        std::wcout << dir << std::endl;
+        return;
+    }
+
+    do
+    {
+        std::wstring fileName = findData.cFileName;
+        std::wstring fullPath = dir + L"\\" + fileName;
+
+        DWORD errorCode = 0;
+        bool ok = tryLoadSingleDll(fullPath.c_str(), errorCode);
+
+        std::wcout << (ok ? L"[OK]   " : L"[FAIL] ") << fileName;
+        if (! ok)
+            std::wcout << L" - failed alone with code " << errorCode;
+        std::wcout << std::endl;
+    }
+    while (FindNextFileW(find, &findData));
+
+    FindClose(find);
 }
 
 int main(int argc, char** argv)
@@ -210,6 +267,19 @@ int main(int argc, char** argv)
         {
             std::cout << "[INFO] No HallucinatorShimDiagnostics export found - this binary "
                          "doesn't look like HallucinatorRAVE's shim, or is an older build." << std::endl;
+        }
+
+        // Whatever the shim couldn't resolve, every DLL this plugin ships
+        // lives in this same folder - try loading each one standalone to
+        // find out exactly which specific file can't load on this machine,
+        // rather than guessing at HallucinatorRAVE_Impl.dll's dependency
+        // chain from the outside.
+        auto lastSlash = pathW.find_last_of(L"\\/");
+        if (lastSlash != std::wstring::npos)
+        {
+            std::wstring dir = pathW.substr(0, lastSlash);
+            std::cout << "\n=== Step 3.5: trying every .dll in that folder individually ===" << std::endl;
+            checkAllDllsInDirectory(dir);
         }
 
         return 1;
