@@ -195,6 +195,15 @@ if(WIN32)
                 $<TARGET_FILE:HallucinatorRAVE_VST3>
         COMMENT "Renaming the real plugin binary to HallucinatorRAVE_Impl.dll and installing the dependency-free shim in its place"
         DEPENDS HallucinatorRAVE_Shim)
+
+    # Standalone diagnostic (not shipped, not part of dist/) - see its own
+    # top-of-file comment. Built as a normal CI artifact so it can be handed
+    # to a user hitting a load failure CI itself can't reproduce, to run on
+    # their own affected machine. Header-only use of the VST3 SDK's
+    # interface declarations - no torch/JUCE dependency needed.
+    add_executable(vst3_load_diagnostic tools/vst3_load_diagnostic.cpp)
+    target_include_directories(vst3_load_diagnostic PRIVATE
+        libs/JUCE/modules/juce_audio_processors/format_types/VST3_SDK)
 endif()
 
 # -----------------------------------------------------------------------------

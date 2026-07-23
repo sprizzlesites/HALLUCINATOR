@@ -160,3 +160,13 @@ jobs:
           name: HallucinatorRAVE-windows-vst3
           path: HallucinatorRAVE-windows-vst3.zip
           retention-days: 14
+
+      # Standalone diagnostic tool (see tools/vst3_load_diagnostic.cpp) -
+      # NOT part of the plugin itself, uploaded separately so it can be
+      # handed to a user hitting a real-DAW load failure CI can't
+      # reproduce, to run directly on their affected machine.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vst3_load_diagnostic
+          path: build\vst3_load_diagnostic.exe
+          retention-days: 14
