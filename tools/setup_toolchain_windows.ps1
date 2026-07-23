@@ -15,7 +15,17 @@
 $ErrorActionPreference = "Stop"
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
-$TorchVersion = "2.4.0"
+# Deliberately NOT 2.4.0 (which the Linux side still uses): the 2.4.0
+# Windows CPU wheel ships an fbgemm.dll with a dangling dependency that
+# isn't in torch/lib. It loads fine on a GitHub CI runner (those images
+# come preloaded with ML/Intel tooling that satisfies it system-wide) but
+# fails with "WinError 126 / the specified module could not be found" on a
+# clean Windows install - which cascades to torch_cpu.dll (imports fbgemm)
+# and then this plugin's own DLL (imports torch_cpu). Confirmed on a real
+# user's machine via tools/vst3_load_diagnostic.exe. 2.5.1's Windows wheel
+# ships a self-contained fbgemm.dll, so it loads standalone with nothing
+# else on the system.
+$TorchVersion = "2.5.1"
 
 if (-not (Test-Path "libs\JUCE")) {
     git clone --depth 1 --branch 8.0.6 https://github.com/juce-framework/JUCE.git libs\JUCE
