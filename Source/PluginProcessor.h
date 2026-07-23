@@ -147,7 +147,14 @@ private:
     RingBuffer outputRing;
     RingBuffer dryDelayL, dryDelayR;
 
-    std::vector<float> prevDecodedTail;
+    // The last output sample of the previously emitted frame. A new frame's
+    // leading edge is faded FROM this value so the join is continuous (no
+    // step) at frame/chunk boundaries - see processBlock(). Storing a single
+    // anchor sample (rather than a tail window) is deliberate: fading from
+    // the true previous endpoint guarantees C0 continuity, whereas the old
+    // tail-window crossfade blended against samples 128 back from that
+    // endpoint and so introduced a step at every boundary (~23 clicks/sec).
+    float prevLastSample = 0.0f;
     bool havePrevTail = false;
 
     // Stereo decorrelation allpass state (right channel only).

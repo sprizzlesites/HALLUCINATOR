@@ -116,7 +116,7 @@ void HallucinatorAudioProcessor::resizeBuffersForRatio(int ratio)
     dryDelayL.push(zeros.data(), ratio);
     dryDelayR.push(zeros.data(), ratio);
 
-    prevDecodedTail.assign((size_t) crossfadeLength, 0.0f);
+    prevLastSample = 0.0f;
     havePrevTail = false;
     chunkFramePos = 0;
 }
@@ -329,12 +329,17 @@ void HallucinatorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
 
         std::vector<float> outFrame(decodedData, decodedData + currentRatio);
 
-        // Crossfade-smooth this frame's leading edge against the previous
-        // frame's tail only at a Chunk Size boundary (chunkFramePos == 0).
-        // Within a chunk, frames concatenate raw so more of the model's own
-        // (manipulated) output comes through - that's what the Chunk Size
-        // knob controls. chunkFrames == 1 makes every frame a boundary,
-        // i.e. the original always-smoothed behaviour.
+        // De-click this frame's leading edge by fading it in FROM the
+        // previous frame's true last output sample, so the join is
+        // continuous (outFrame[0] == prevLastSample at w==0). Applied only
+        // at a Chunk Size boundary (chunkFramePos == 0); within a chunk,
+        // frames concatenate raw so more of the model's own (manipulated)
+        // output comes through - that's what the Chunk Size knob controls.
+        // chunkFrames == 1 makes every frame a boundary. For a streaming
+        // model whose frames are already continuous this fade is a near
+        // no-op (prevLastSample ~= outFrame[0] already); for a discontinuous
+        // seam (heavy latent manipulation, or a stateless model) it ramps
+        // smoothly instead of stepping.
         const bool atChunkBoundary = (chunkFramePos == 0);
 
         if (havePrevTail && atChunkBoundary)
@@ -343,12 +348,11 @@ void HallucinatorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
             {
                 const float t = (float) i / (float) crossfadeLength;
                 const float w = 0.5f - 0.5f * std::cos(juce::MathConstants<float>::pi * t); // raised cosine 0->1
-                outFrame[(size_t) i] = prevDecodedTail[(size_t) i] * (1.0f - w) + outFrame[(size_t) i] * w;
+                outFrame[(size_t) i] = prevLastSample * (1.0f - w) + outFrame[(size_t) i] * w;
             }
         }
 
-        for (int i = 0; i < crossfadeLength && i < currentRatio; ++i)
-            prevDecodedTail[(size_t) i] = decodedData[currentRatio - crossfadeLength + i];
+        prevLastSample = decodedData[currentRatio - 1];
         havePrevTail = true;
         chunkFramePos = (chunkFramePos + 1) % chunkFrames;
 
