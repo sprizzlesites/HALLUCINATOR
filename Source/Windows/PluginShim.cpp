@@ -50,6 +50,15 @@ namespace
         return lastSlash == std::wstring::npos ? std::wstring {} : full.substr(0, lastSlash);
     }
 
+    // Set only inside getImplModule()'s one-time load attempt below, so
+    // HallucinatorShimDiagnostics() (see bottom of file) can report exactly
+    // what path was tried and why it failed - GetPluginFactory() alone
+    // only ever returns null on failure, silently swallowing GetLastError()
+    // and the computed path, which left a real user-reported load failure
+    // undiagnosable from the outside (see tools/vst3_load_diagnostic.cpp).
+    std::wstring lastImplPathAttempted;
+    DWORD lastImplLoadError = 0;
+
     // Lazy, thread-safe (C++11 static-init) load: deferred until the host
     // first actually calls into the plugin, well after this shim's own
     // DllMain has returned - loading another DLL from inside DllMain risks
@@ -60,10 +69,16 @@ namespace
         {
             auto dir = getOwnModuleDirectory();
             if (dir.empty())
+            {
+                lastImplLoadError = ERROR_PATH_NOT_FOUND; // couldn't even determine our own directory
                 return nullptr;
+            }
 
-            std::wstring implPath = dir + L"\\HallucinatorRAVE_Impl.dll";
-            return LoadLibraryExW(implPath.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+            lastImplPathAttempted = dir + L"\\HallucinatorRAVE_Impl.dll";
+            HMODULE h = LoadLibraryExW(lastImplPathAttempted.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+            if (h == nullptr)
+                lastImplLoadError = GetLastError();
+            return h;
         }();
 
         return implModule;
@@ -106,4 +121,29 @@ extern "C" __declspec(dllexport) bool ExitDll()
 BOOL WINAPI DllMain(HINSTANCE, DWORD, LPVOID)
 {
     return TRUE;
+}
+
+// Diagnostic-only export (see tools/vst3_load_diagnostic.cpp): forces the
+// lazy impl load attempt (if not already made) and reports exactly what
+// path was tried, whether it succeeded, and the Win32 error code if not -
+// none of which GetPluginFactory() alone exposes, since it just returns
+// null either way. pathBufOut/pathBufLen follow the usual "buffer + max
+// length including the NUL" convention; either output pointer may be null
+// if the caller doesn't need it.
+extern "C" __declspec(dllexport) void HallucinatorShimDiagnostics(wchar_t* pathBufOut, int pathBufLen,
+                                                                    unsigned long* lastErrorOut, int* loadedOut)
+{
+    HMODULE m = getImplModule();
+
+    if (loadedOut != nullptr)
+        *loadedOut = (m != nullptr) ? 1 : 0;
+
+    if (lastErrorOut != nullptr)
+        *lastErrorOut = lastImplLoadError;
+
+    if (pathBufOut != nullptr && pathBufLen > 0)
+    {
+        size_t n = lastImplPathAttempted.copy(pathBufOut, (size_t) (pathBufLen - 1));
+        pathBufOut[n] = L'\0';
+    }
 }

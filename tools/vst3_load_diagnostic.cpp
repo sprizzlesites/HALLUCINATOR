@@ -187,6 +187,31 @@ int main(int argc, char** argv)
     if (factory == nullptr)
     {
         std::cout << "[FAIL] GetPluginFactory() returned null" << std::endl;
+
+        // If this binary is HallucinatorRAVE's own shim (see Source/Windows/
+        // PluginShim.cpp), it exports a diagnostic-only function that
+        // reveals exactly what GetPluginFactory() alone can't: the impl DLL
+        // path it tried, and the raw Win32 error if loading it failed.
+        using DiagFunc = void (*) (wchar_t*, int, unsigned long*, int*);
+        auto diagFn = reinterpret_cast<DiagFunc>(GetProcAddress(mod, "HallucinatorShimDiagnostics"));
+        if (diagFn != nullptr)
+        {
+            wchar_t pathBuf[512] = {};
+            unsigned long lastError = 0;
+            int loaded = 0;
+            diagFn(pathBuf, 512, &lastError, &loaded);
+
+            std::wcout << L"[INFO] Shim tried to load: " << pathBuf << std::endl;
+            std::cout << "[INFO] Impl DLL loaded: " << (loaded ? "yes" : "no") << std::endl;
+            if (! loaded)
+                std::cout << "[INFO] LoadLibraryExW failed with Win32 error " << lastError << std::endl;
+        }
+        else
+        {
+            std::cout << "[INFO] No HallucinatorShimDiagnostics export found - this binary "
+                         "doesn't look like HallucinatorRAVE's shim, or is an older build." << std::endl;
+        }
+
         return 1;
     }
     std::cout << "[OK] GetPluginFactory() returned " << factory << std::endl;
