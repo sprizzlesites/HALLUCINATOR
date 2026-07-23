@@ -115,6 +115,14 @@ public:
     juce::AudioProcessorValueTreeState apvts;
 
 private:
+    /** Installs an already-successfully-loaded model (moves it in) and
+        does everything loading a model requires beyond the load() call
+        itself: buffer resizing, latent engine prep, reseeding, latency
+        reporting. Shared by the synchronous loadModel() path and the
+        constructor's background auto-load (see the constructor). */
+    void installLoadedModel(RaveModel&& model, const juce::File& modelFile);
+
+
     torch::Tensor processFrame(const torch::Tensor& inputFrame,
                                 bool freezeOn,
                                 float exaggerationAmount,
@@ -163,6 +171,13 @@ private:
 
     bool latentIsFrozen = false;
     torch::Tensor frozenLatent;
+
+    // Lets the constructor's background auto-load thread (see
+    // PluginProcessor.cpp) safely check "is this processor still alive?"
+    // before touching it from an async callback that could otherwise run
+    // after the processor has already been destroyed (e.g. a host that
+    // scans-and-immediately-discards a plugin instance).
+    JUCE_DECLARE_WEAK_REFERENCEABLE(HallucinatorAudioProcessor)
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(HallucinatorAudioProcessor)
 };

@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include <thread>
 
 namespace
 {
@@ -33,27 +34,66 @@ HallucinatorAudioProcessor::HallucinatorAudioProcessor()
     // headlessly / in a fixed studio setup without clicking through a file
     // picker every time. The editor's file picker always takes precedence
     // once the user has chosen something (see setStateInformation).
-    bool autoLoaded = false;
+    juce::File autoLoadPath;
+    bool haveAutoLoadPath = false;
 
     if (auto* envPath = std::getenv("HALLUCINATOR_RAVE_MODEL"))
     {
-        juce::File f { juce::String(envPath) };
-        juce::String err;
-        autoLoaded = loadModel(f, err);
+        autoLoadPath = juce::File(juce::String(envPath));
+        haveAutoLoadPath = true;
     }
-
-    // Otherwise, a model bundled alongside the plugin (see
-    // findBundledDefaultModel()) loads with no user action at all - this is
-    // what makes a dist/ package containing both files "unzip and go"
-    // rather than "unzip, then separately go find and load a model".
-    if (! autoLoaded)
+    else
     {
+        // Otherwise, a model bundled alongside the plugin (see
+        // findBundledDefaultModel()) loads with no user action at all -
+        // this is what makes a dist/ package containing both files "unzip
+        // and go" rather than "unzip, then separately go find and load a
+        // model".
         auto bundled = findBundledDefaultModel();
         if (bundled.existsAsFile())
         {
-            juce::String err;
-            loadModel(bundled, err);
+            autoLoadPath = bundled;
+            haveAutoLoadPath = true;
         }
+    }
+
+    // Loaded on a background thread, not synchronously in the constructor:
+    // a real trained checkpoint can take multiple seconds to deserialize
+    // and JIT-compile (torch::jit::load() plus RaveModel::load()'s sanity
+    // round trip), and hosts construct a plugin instance as part of
+    // *scanning/identification* - a slow synchronous construction here
+    // reads to the host as a hung/broken plugin (confirmed via a real user
+    // report: FL Studio showed a generic scan "error", no vendor/category,
+    // no chance to open the UI - identical before and after fixing an
+    // unrelated DLL search-path bug, which pointed at construction time
+    // itself being the actual blocker). processBlock() already tolerates
+    // "no model loaded yet" (pure passthrough), so audio processing is
+    // safe to start before this finishes; installLoadedModel() is what the
+    // synchronous editor "Load Model..." button also uses, so this shares
+    // the same (pre-existing, documented) lack of locking against a
+    // concurrently-running processBlock() as that path already has.
+    if (haveAutoLoadPath)
+    {
+        juce::WeakReference<HallucinatorAudioProcessor> safeThis(this);
+        auto path = autoLoadPath;
+
+        std::thread([safeThis, path]() mutable
+        {
+            auto loaded = std::make_shared<RaveModel>();
+            auto err = std::make_shared<juce::String>();
+            const bool ok = loaded->load(path, *err);
+
+            juce::MessageManager::callAsync([safeThis, loaded, err, ok, path]()
+            {
+                if (auto* proc = safeThis.get())
+                {
+                    if (ok)
+                        proc->installLoadedModel(std::move(*loaded), path);
+                    else
+                        proc->lastModelError = *err;
+                }
+            });
+        }).detach();
     }
 }
 
@@ -109,7 +149,13 @@ bool HallucinatorAudioProcessor::loadModel(const juce::File& modelFile, juce::St
         return false;
     }
 
-    raveModel = std::move(newModel);
+    installLoadedModel(std::move(newModel), modelFile);
+    return true;
+}
+
+void HallucinatorAudioProcessor::installLoadedModel(RaveModel&& model, const juce::File& modelFile)
+{
+    raveModel = std::move(model);
     loadedModelPath = modelFile.getFullPathName();
     lastModelError.clear();
 
@@ -123,8 +169,6 @@ bool HallucinatorAudioProcessor::loadModel(const juce::File& modelFile, juce::St
     latentIsFrozen = false;
 
     setLatencySamples(currentRatio);
-
-    return true;
 }
 
 void HallucinatorAudioProcessor::prepareToPlay(double sampleRate, int /*samplesPerBlock*/)
