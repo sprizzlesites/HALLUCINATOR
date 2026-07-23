@@ -23,6 +23,8 @@ private:
     juce::Slider dryWetSlider, noiseSlider, exaggerationSlider, priorMixSlider, seedSlider;
     juce::Label dryWetLabel, noiseLabel, exaggerationLabel, priorMixLabel, seedLabel, feedbackLabel;
     juce::Slider feedbackSlider;
+    juce::Slider chunkSlider;
+    juce::Label chunkLabel;
     juce::ToggleButton freezeLatentButton { "Freeze Latent" };
     juce::ToggleButton freezeSeedButton { "Freeze Seed" };
 
@@ -36,7 +38,7 @@ private:
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
 
     std::unique_ptr<SliderAttachment> dryWetAttachment, noiseAttachment, exaggerationAttachment,
-        feedbackAttachment, priorMixAttachment, seedAttachment;
+        feedbackAttachment, priorMixAttachment, seedAttachment, chunkAttachment;
     std::unique_ptr<ButtonAttachment> freezeLatentAttachment, freezeSeedAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(HallucinatorAudioProcessorEditor)

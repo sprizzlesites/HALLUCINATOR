@@ -264,6 +264,7 @@ int main(int argc, char** argv)
         { Params::exaggeration,  6.0f, "Exaggeration"        },
         { Params::feedbackIters, 3.0f, "Feedback Iterations" },
         { Params::priorMix,      0.8f, "Prior Mix"           },
+        { Params::chunkSize,     8.0f, "Chunk Size"          },
         { Params::freezeLatent,  1.0f, "Freeze Latent"       },
     };
 
@@ -275,6 +276,8 @@ int main(int argc, char** argv)
         proc.apvts.getParameter(Params::feedbackIters)->setValueNotifyingHost(0.0f);
         proc.apvts.getParameter(Params::priorMix)->setValueNotifyingHost(0.0f);
         proc.apvts.getParameter(Params::freezeLatent)->setValueNotifyingHost(0.0f);
+        proc.apvts.getParameter(Params::chunkSize)->setValueNotifyingHost(
+            proc.apvts.getParameter(Params::chunkSize)->convertTo0to1((float) Params::minChunkFrames));
 
         proc.apvts.getParameter(pt.id)->setValueNotifyingHost(
             proc.apvts.getParameter(pt.id)->convertTo0to1(pt.value));
@@ -287,6 +290,11 @@ int main(int argc, char** argv)
         std::cout << pt.label << " vs baseline max abs diff: " << diff << std::endl;
         check(diff > 1.0e-4, juce::String(pt.label) + " audibly changes the output");
     }
+
+    // Restore Chunk Size to its default so it doesn't leak into the later
+    // Freeze Seed / block-size checks below.
+    proc.apvts.getParameter(Params::chunkSize)->setValueNotifyingHost(
+        proc.apvts.getParameter(Params::chunkSize)->convertTo0to1((float) Params::minChunkFrames));
 
     // --- Seed / Freeze Seed: frozen seed must be reproducible ---------------
     {

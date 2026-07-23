@@ -25,6 +25,7 @@ HallucinatorAudioProcessorEditor::HallucinatorAudioProcessorEditor(HallucinatorA
     setupSlider(feedbackSlider, feedbackLabel, "Feedback Iters", *this);
     setupSlider(priorMixSlider, priorMixLabel, "Prior Mix", *this);
     setupSlider(seedSlider, seedLabel, "Seed", *this);
+    setupSlider(chunkSlider, chunkLabel, "Chunk Size", *this);
 
     addAndMakeVisible(freezeLatentButton);
     addAndMakeVisible(freezeSeedButton);
@@ -47,6 +48,7 @@ HallucinatorAudioProcessorEditor::HallucinatorAudioProcessorEditor(HallucinatorA
     feedbackAttachment     = std::make_unique<SliderAttachment>(apvts, Params::feedbackIters, feedbackSlider);
     priorMixAttachment     = std::make_unique<SliderAttachment>(apvts, Params::priorMix, priorMixSlider);
     seedAttachment         = std::make_unique<SliderAttachment>(apvts, Params::seed, seedSlider);
+    chunkAttachment        = std::make_unique<SliderAttachment>(apvts, Params::chunkSize, chunkSlider);
     freezeLatentAttachment = std::make_unique<ButtonAttachment>(apvts, Params::freezeLatent, freezeLatentButton);
     freezeSeedAttachment   = std::make_unique<ButtonAttachment>(apvts, Params::freezeSeed, freezeSeedButton);
 
@@ -54,7 +56,7 @@ HallucinatorAudioProcessorEditor::HallucinatorAudioProcessorEditor(HallucinatorA
     startTimerHz(4);
 
     setResizable(false, false);
-    setSize(640, 360);
+    setSize(740, 360);
 }
 
 HallucinatorAudioProcessorEditor::~HallucinatorAudioProcessorEditor()
@@ -84,12 +86,13 @@ void HallucinatorAudioProcessorEditor::resized()
     area.removeFromTop(10);
 
     auto knobRow = area.removeFromTop(140);
-    const int knobWidth = knobRow.getWidth() / 6;
+    const int knobWidth = knobRow.getWidth() / 7;
     dryWetSlider.setBounds(knobRow.removeFromLeft(knobWidth).reduced(6, 20));
     noiseSlider.setBounds(knobRow.removeFromLeft(knobWidth).reduced(6, 20));
     exaggerationSlider.setBounds(knobRow.removeFromLeft(knobWidth).reduced(6, 20));
     feedbackSlider.setBounds(knobRow.removeFromLeft(knobWidth).reduced(6, 20));
     priorMixSlider.setBounds(knobRow.removeFromLeft(knobWidth).reduced(6, 20));
+    chunkSlider.setBounds(knobRow.removeFromLeft(knobWidth).reduced(6, 20));
     seedSlider.setBounds(knobRow.reduced(6, 20));
 
     area.removeFromTop(10);
@@ -112,6 +115,11 @@ void HallucinatorAudioProcessorEditor::timerCallback()
         cpuLoadLabel.setColour(juce::Label::textColourId, juce::Colours::orange);
     else
         cpuLoadLabel.setColour(juce::Label::textColourId, juce::Colours::lightgreen);
+
+    // Keep the model-status line in sync with whatever the processor
+    // actually has loaded - covers auto-load, host state restore, and the
+    // sample-rate-mismatch warning appearing once playback starts.
+    refreshModelStatus();
 }
 
 void HallucinatorAudioProcessorEditor::refreshModelStatus()

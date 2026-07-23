@@ -1,6 +1,5 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
-#include <thread>
 
 namespace
 {
@@ -27,6 +26,7 @@ HallucinatorAudioProcessor::HallucinatorAudioProcessor()
     pFreezeLatent  = apvts.getRawParameterValue(Params::freezeLatent);
     pSeed          = apvts.getRawParameterValue(Params::seed);
     pFreezeSeed    = apvts.getRawParameterValue(Params::freezeSeed);
+    pChunkSize     = apvts.getRawParameterValue(Params::chunkSize);
 
     resizeBuffersForRatio(currentRatio);
 
@@ -57,43 +57,24 @@ HallucinatorAudioProcessor::HallucinatorAudioProcessor()
         }
     }
 
-    // Loaded on a background thread, not synchronously in the constructor:
-    // a real trained checkpoint can take multiple seconds to deserialize
-    // and JIT-compile (torch::jit::load() plus RaveModel::load()'s sanity
-    // round trip), and hosts construct a plugin instance as part of
-    // *scanning/identification* - a slow synchronous construction here
-    // reads to the host as a hung/broken plugin (confirmed via a real user
-    // report: FL Studio showed a generic scan "error", no vendor/category,
-    // no chance to open the UI - identical before and after fixing an
-    // unrelated DLL search-path bug, which pointed at construction time
-    // itself being the actual blocker). processBlock() already tolerates
-    // "no model loaded yet" (pure passthrough), so audio processing is
-    // safe to start before this finishes; installLoadedModel() is what the
-    // synchronous editor "Load Model..." button also uses, so this shares
-    // the same (pre-existing, documented) lack of locking against a
-    // concurrently-running processBlock() as that path already has.
+    // Loaded synchronously here in the constructor: deserializing a real
+    // checkpoint takes a couple of seconds (torch::jit::load() plus
+    // RaveModel::load()'s sanity round trip), which is well within a host's
+    // plugin-scan tolerance now that model loading is fast and reliable.
+    // An earlier version did this on a background thread to avoid a
+    // suspected slow-construction scan hang, but that hang turned out to be
+    // an unrelated Windows DLL problem (torch 2.4.0's fbgemm.dll) - and the
+    // async path had a real downside: the model often wasn't loaded yet by
+    // the time the editor opened, so the plugin came up with no model and
+    // forced a manual file-picker selection. Synchronous load guarantees
+    // the bundled model is in place before the host queries latency or the
+    // editor first paints. On failure, lastModelError is set and surfaced
+    // in the editor; processBlock() stays pure passthrough until a model
+    // loads.
     if (haveAutoLoadPath)
     {
-        juce::WeakReference<HallucinatorAudioProcessor> safeThis(this);
-        auto path = autoLoadPath;
-
-        std::thread([safeThis, path]() mutable
-        {
-            auto loaded = std::make_shared<RaveModel>();
-            auto err = std::make_shared<juce::String>();
-            const bool ok = loaded->load(path, *err);
-
-            juce::MessageManager::callAsync([safeThis, loaded, err, ok, path]()
-            {
-                if (auto* proc = safeThis.get())
-                {
-                    if (ok)
-                        proc->installLoadedModel(std::move(*loaded), path);
-                    else
-                        proc->lastModelError = *err;
-                }
-            });
-        }).detach();
+        juce::String err;
+        loadModel(autoLoadPath, err);
     }
 }
 
@@ -137,6 +118,7 @@ void HallucinatorAudioProcessor::resizeBuffersForRatio(int ratio)
 
     prevDecodedTail.assign((size_t) crossfadeLength, 0.0f);
     havePrevTail = false;
+    chunkFramePos = 0;
 }
 
 bool HallucinatorAudioProcessor::loadModel(const juce::File& modelFile, juce::String& errorMessage)
@@ -303,6 +285,8 @@ void HallucinatorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
     const int feedbackIt   = juce::jlimit(0, Params::maxFeedbackIterations, (int) pFeedbackIters->load());
     const float priorMixAmt = pPriorMix->load();
     const bool freezeOn    = pFreezeLatent->load() > 0.5f;
+    const int chunkFrames  = juce::jlimit(Params::minChunkFrames, Params::maxChunkFrames,
+                                          pChunkSize != nullptr ? (int) pChunkSize->load() : 1);
 
     const auto blockStartTime = juce::Time::getHighResolutionTicks();
 
@@ -345,7 +329,15 @@ void HallucinatorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
 
         std::vector<float> outFrame(decodedData, decodedData + currentRatio);
 
-        if (havePrevTail)
+        // Crossfade-smooth this frame's leading edge against the previous
+        // frame's tail only at a Chunk Size boundary (chunkFramePos == 0).
+        // Within a chunk, frames concatenate raw so more of the model's own
+        // (manipulated) output comes through - that's what the Chunk Size
+        // knob controls. chunkFrames == 1 makes every frame a boundary,
+        // i.e. the original always-smoothed behaviour.
+        const bool atChunkBoundary = (chunkFramePos == 0);
+
+        if (havePrevTail && atChunkBoundary)
         {
             for (int i = 0; i < crossfadeLength && i < currentRatio; ++i)
             {
@@ -358,6 +350,7 @@ void HallucinatorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
         for (int i = 0; i < crossfadeLength && i < currentRatio; ++i)
             prevDecodedTail[(size_t) i] = decodedData[currentRatio - crossfadeLength + i];
         havePrevTail = true;
+        chunkFramePos = (chunkFramePos + 1) % chunkFrames;
 
         outputRing.push(outFrame.data(), currentRatio);
     }

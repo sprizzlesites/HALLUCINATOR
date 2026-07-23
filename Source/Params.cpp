@@ -33,5 +33,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout Params::createLayout()
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID { freezeSeed, 1 }, "Freeze Seed", false));
 
+    params.push_back(std::make_unique<juce::AudioParameterInt>(
+        juce::ParameterID { chunkSize, 1 }, "Chunk Size",
+        minChunkFrames, maxChunkFrames, minChunkFrames));
+
     return { params.begin(), params.end() };
 }

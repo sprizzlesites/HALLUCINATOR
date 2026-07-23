@@ -168,16 +168,15 @@ private:
     std::atomic<float>* pFreezeLatent = nullptr;
     std::atomic<float>* pSeed = nullptr;
     std::atomic<float>* pFreezeSeed = nullptr;
+    std::atomic<float>* pChunkSize = nullptr;
 
     bool latentIsFrozen = false;
     torch::Tensor frozenLatent;
 
-    // Lets the constructor's background auto-load thread (see
-    // PluginProcessor.cpp) safely check "is this processor still alive?"
-    // before touching it from an async callback that could otherwise run
-    // after the processor has already been destroyed (e.g. a host that
-    // scans-and-immediately-discards a plugin instance).
-    JUCE_DECLARE_WEAK_REFERENCEABLE(HallucinatorAudioProcessor)
+    // Position within the current Chunk Size group (0 .. chunkFrames-1). A
+    // crossfade re-anchor happens only at position 0, so consecutive frames
+    // within a chunk concatenate raw. Reset on prepareToPlay / model load.
+    int chunkFramePos = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(HallucinatorAudioProcessor)
 };
