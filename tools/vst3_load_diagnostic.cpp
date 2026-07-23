@@ -27,6 +27,7 @@
 #include <windows.h>
 #include <iostream>
 #include <string>
+#include <vector>
 
 #include "pluginterfaces/base/ipluginbase.h"
 
@@ -151,6 +152,73 @@ namespace
     }
 }
 
+// Parses the target's real PE import table (memory-mapped as raw file
+// bytes, not loaded as an image) to list every DLL name it declares as a
+// dependency - system DLLs included, not just siblings in the same folder.
+// This is ground truth, rather than another guess at which DLL name might
+// be the missing piece.
+std::vector<std::string> listDeclaredImports(const wchar_t* path)
+{
+    std::vector<std::string> result;
+
+    HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+        return result;
+
+    HANDLE mapping = CreateFileMappingW(file, nullptr, PAGE_READONLY, 0, 0, nullptr);
+    if (mapping == nullptr)
+    {
+        CloseHandle(file);
+        return result;
+    }
+
+    auto* base = static_cast<const unsigned char*>(MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0));
+    if (base != nullptr)
+    {
+        auto* dosHeader = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+        if (dosHeader->e_magic == IMAGE_DOS_SIGNATURE)
+        {
+            auto* ntHeaders = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dosHeader->e_lfanew);
+            if (ntHeaders->Signature == IMAGE_NT_SIGNATURE)
+            {
+                auto rvaToOffset = [&](DWORD rva) -> DWORD
+                {
+                    auto* section = IMAGE_FIRST_SECTION(ntHeaders);
+                    for (WORD i = 0; i < ntHeaders->FileHeader.NumberOfSections; ++i, ++section)
+                    {
+                        if (rva >= section->VirtualAddress && rva < section->VirtualAddress + section->Misc.VirtualSize)
+                            return rva - section->VirtualAddress + section->PointerToRawData;
+                    }
+                    return 0;
+                };
+
+                DWORD importDirRva = ntHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress;
+                if (importDirRva != 0)
+                {
+                    DWORD importDirOffset = rvaToOffset(importDirRva);
+                    if (importDirOffset != 0)
+                    {
+                        auto* descriptor = reinterpret_cast<const IMAGE_IMPORT_DESCRIPTOR*>(base + importDirOffset);
+                        while (descriptor->Name != 0)
+                        {
+                            DWORD nameOffset = rvaToOffset(descriptor->Name);
+                            if (nameOffset != 0)
+                                result.push_back(reinterpret_cast<const char*>(base + nameOffset));
+                            ++descriptor;
+                        }
+                    }
+                }
+            }
+        }
+
+        UnmapViewOfFile(base);
+    }
+
+    CloseHandle(mapping);
+    CloseHandle(file);
+    return result;
+}
+
 void checkAllDllsInDirectory(const std::wstring& dir)
 {
     std::wstring pattern = dir + L"\\*.dll";
@@ -175,6 +243,15 @@ void checkAllDllsInDirectory(const std::wstring& dir)
         if (! ok)
             std::wcout << L" - failed alone with code " << errorCode;
         std::wcout << std::endl;
+
+        if (! ok)
+        {
+            auto imports = listDeclaredImports(fullPath.c_str());
+            std::cout << "       declared imports (" << imports.size() << "): ";
+            for (size_t i = 0; i < imports.size(); ++i)
+                std::cout << (i == 0 ? "" : ", ") << imports[i];
+            std::cout << std::endl;
+        }
     }
     while (FindNextFileW(find, &findData));
 
