@@ -329,26 +329,31 @@ void HallucinatorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
 
         std::vector<float> outFrame(decodedData, decodedData + currentRatio);
 
-        // De-click this frame's leading edge by fading it in FROM the
-        // previous frame's true last output sample, so the join is
-        // continuous (outFrame[0] == prevLastSample at w==0). Applied only
-        // at a Chunk Size boundary (chunkFramePos == 0); within a chunk,
-        // frames concatenate raw so more of the model's own (manipulated)
-        // output comes through - that's what the Chunk Size knob controls.
-        // chunkFrames == 1 makes every frame a boundary. For a streaming
-        // model whose frames are already continuous this fade is a near
-        // no-op (prevLastSample ~= outFrame[0] already); for a discontinuous
-        // seam (heavy latent manipulation, or a stateless model) it ramps
-        // smoothly instead of stepping.
+        // De-click this frame's leading edge with a DC-offset declicker:
+        // add a smoothly-decaying offset that cancels the seam gap (the step
+        // between the previous frame's last sample and this frame's first),
+        // decaying to zero over crossfadeLength. Unlike a lerp-toward-the-
+        // previous-sample, this PRESERVES the frame's own waveform shape and
+        // only removes the step, so it's essentially transparent when the
+        // seam is already continuous (a streaming model's frames), and only
+        // does visible work on a genuine discontinuity (heavy latent
+        // manipulation, or a stateless model). The raised-cosine decay has
+        // zero slope at both ends, so it adds no slope kink either.
+        //
+        // Applied only at a Chunk Size boundary (chunkFramePos == 0); within
+        // a chunk, frames concatenate raw so more of the model's own
+        // (manipulated) output comes through - that's what the Chunk Size
+        // knob controls. chunkFrames == 1 makes every frame a boundary.
         const bool atChunkBoundary = (chunkFramePos == 0);
 
         if (havePrevTail && atChunkBoundary)
         {
+            const float gap = prevLastSample - outFrame[0];
             for (int i = 0; i < crossfadeLength && i < currentRatio; ++i)
             {
                 const float t = (float) i / (float) crossfadeLength;
-                const float w = 0.5f - 0.5f * std::cos(juce::MathConstants<float>::pi * t); // raised cosine 0->1
-                outFrame[(size_t) i] = prevLastSample * (1.0f - w) + outFrame[(size_t) i] * w;
+                const float decay = 0.5f + 0.5f * std::cos(juce::MathConstants<float>::pi * t); // 1 -> 0, zero slope at both ends
+                outFrame[(size_t) i] += gap * decay;
             }
         }
 
