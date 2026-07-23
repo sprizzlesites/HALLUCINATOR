@@ -22,6 +22,21 @@ jobs:
         shell: pwsh
         run: tools/setup_toolchain_windows.ps1
 
+      - name: List every DLL under the torch venv (diagnostic)
+        shell: pwsh
+        run: |
+          # A real user's diagnostic run showed torch_cpu.dll and fbgemm.dll
+          # failing to load standalone (Win32 error 126) even with every
+          # torch/lib/*.dll present and correctly sized - no mkl_*.dll files
+          # anywhere in that folder. CMakeLists.txt's TORCH_RUNTIME_DLLS only
+          # globs torch/lib/*.dll; if MKL's own runtime installed somewhere
+          # else in this venv (a separate pip package sometimes lands
+          # outside torch/lib/), that's the missing piece. This lists every
+          # .dll anywhere under the venv so the exact path is known instead
+          # of guessed.
+          Get-ChildItem -Path "libs\torch-venv" -Recurse -Filter "*.dll" |
+            Select-Object -ExpandProperty FullName
+
       - name: Put LibTorch DLLs on PATH
         shell: pwsh
         run: |
