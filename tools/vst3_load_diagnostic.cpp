@@ -16,6 +16,12 @@
 // of guessing blind from an environment (this project's own CI) that
 // hasn't been able to reproduce the failure at all.
 //
+// Every SEH-guarded (__try/__except) call lives in its own tiny helper
+// function with no C++ objects that have destructors in scope - MSVC
+// refuses to compile __try in a function that also needs C++ object
+// unwinding (error C2712), which a first version of this file hit by
+// mixing __try with local std::string/std::wstring objects in main().
+//
 // Usage:
 //   vst3_load_diagnostic.exe "C:\path\to\HallucinatorRAVE.vst3\Contents\x86_64-win\HallucinatorRAVE.vst3"
 #include <windows.h>
@@ -41,6 +47,80 @@ namespace
                  (unsigned char) tuid[8], (unsigned char) tuid[9], (unsigned char) tuid[10], (unsigned char) tuid[11],
                  (unsigned char) tuid[12], (unsigned char) tuid[13], (unsigned char) tuid[14], (unsigned char) tuid[15]);
         return buf;
+    }
+
+    // --- SEH-guarded calls, isolated: no C++ objects with destructors in
+    //     any of these functions' own locals/parameters (POD/pointer/
+    //     reference only) --------------------------------------------------
+
+    bool callInitDll(InitModuleFunc initDll, bool& outResult, DWORD& outExceptionCode)
+    {
+        __try
+        {
+            outResult = initDll();
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            outExceptionCode = GetExceptionCode();
+            return false;
+        }
+    }
+
+    bool callGetPluginFactory(GetFactoryProc getFactory, IPluginFactory*& outFactory, DWORD& outExceptionCode)
+    {
+        __try
+        {
+            outFactory = getFactory();
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            outExceptionCode = GetExceptionCode();
+            return false;
+        }
+    }
+
+    bool callGetFactoryInfo(IPluginFactory* factory, PFactoryInfo& outInfo, tresult& outResult, DWORD& outExceptionCode)
+    {
+        __try
+        {
+            outResult = factory->getFactoryInfo(&outInfo);
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            outExceptionCode = GetExceptionCode();
+            return false;
+        }
+    }
+
+    bool callCountClasses(IPluginFactory* factory, int32& outCount, DWORD& outExceptionCode)
+    {
+        __try
+        {
+            outCount = factory->countClasses();
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            outExceptionCode = GetExceptionCode();
+            return false;
+        }
+    }
+
+    bool callGetClassInfo(IPluginFactory* factory, int32 index, PClassInfo& outInfo, tresult& outResult, DWORD& outExceptionCode)
+    {
+        __try
+        {
+            outResult = factory->getClassInfo(index, &outInfo);
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            outExceptionCode = GetExceptionCode();
+            return false;
+        }
     }
 }
 
@@ -79,8 +159,12 @@ int main(int argc, char** argv)
     }
     else
     {
-        bool ok = initDll();
-        std::cout << (ok ? "[OK] " : "[FAIL] ") << "InitDll() returned " << (ok ? "true" : "false") << std::endl;
+        bool ok = false;
+        DWORD exceptionCode = 0;
+        if (! callInitDll(initDll, ok, exceptionCode))
+            std::cout << "[FAIL] InitDll() raised a structured exception (code 0x" << std::hex << exceptionCode << std::dec << ")" << std::endl;
+        else
+            std::cout << (ok ? "[OK] " : "[FAIL] ") << "InitDll() returned " << (ok ? "true" : "false") << std::endl;
     }
 
     std::cout << "\n=== Step 3: GetPluginFactory ===" << std::endl;
@@ -92,14 +176,11 @@ int main(int argc, char** argv)
     }
 
     IPluginFactory* factory = nullptr;
-    __try
-    {
-        factory = getFactory();
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER)
+    DWORD exceptionCode = 0;
+    if (! callGetPluginFactory(getFactory, factory, exceptionCode))
     {
         std::cout << "[FAIL] GetPluginFactory() raised a structured exception (code 0x"
-                  << std::hex << GetExceptionCode() << std::dec << ") - crashed, not just failed" << std::endl;
+                  << std::hex << exceptionCode << std::dec << ") - crashed, not just failed" << std::endl;
         return 1;
     }
 
@@ -112,61 +193,52 @@ int main(int argc, char** argv)
 
     std::cout << "\n=== Step 4: getFactoryInfo ===" << std::endl;
     PFactoryInfo factoryInfo {};
-    __try
-    {
-        tresult result = factory->getFactoryInfo(&factoryInfo);
-        if (result != kResultOk)
-        {
-            std::cout << "[FAIL] getFactoryInfo() returned error code " << result << std::endl;
-        }
-        else
-        {
-            std::cout << "[OK] Vendor: \"" << factoryInfo.vendor << "\"" << std::endl;
-            std::cout << "     URL:    \"" << factoryInfo.url << "\"" << std::endl;
-            std::cout << "     Email:  \"" << factoryInfo.email << "\"" << std::endl;
-        }
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER)
+    tresult factoryInfoResult = kResultFalse;
+    if (! callGetFactoryInfo(factory, factoryInfo, factoryInfoResult, exceptionCode))
     {
         std::cout << "[FAIL] getFactoryInfo() raised a structured exception (code 0x"
-                  << std::hex << GetExceptionCode() << std::dec << ")" << std::endl;
+                  << std::hex << exceptionCode << std::dec << ")" << std::endl;
         return 1;
+    }
+    if (factoryInfoResult != kResultOk)
+    {
+        std::cout << "[FAIL] getFactoryInfo() returned error code " << factoryInfoResult << std::endl;
+    }
+    else
+    {
+        std::cout << "[OK] Vendor: \"" << factoryInfo.vendor << "\"" << std::endl;
+        std::cout << "     URL:    \"" << factoryInfo.url << "\"" << std::endl;
+        std::cout << "     Email:  \"" << factoryInfo.email << "\"" << std::endl;
     }
 
     std::cout << "\n=== Step 5: countClasses / getClassInfo ===" << std::endl;
     int32 numClasses = 0;
-    __try
-    {
-        numClasses = factory->countClasses();
-        std::cout << "[OK] countClasses() = " << numClasses << std::endl;
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER)
+    if (! callCountClasses(factory, numClasses, exceptionCode))
     {
         std::cout << "[FAIL] countClasses() raised a structured exception (code 0x"
-                  << std::hex << GetExceptionCode() << std::dec << ")" << std::endl;
+                  << std::hex << exceptionCode << std::dec << ")" << std::endl;
         return 1;
     }
+    std::cout << "[OK] countClasses() = " << numClasses << std::endl;
 
     for (int32 i = 0; i < numClasses; ++i)
     {
         PClassInfo classInfo {};
-        __try
-        {
-            tresult result = factory->getClassInfo(i, &classInfo);
-            if (result != kResultOk)
-            {
-                std::cout << "[FAIL] getClassInfo(" << i << ") returned error code " << result << std::endl;
-                continue;
-            }
-            std::cout << "[OK] Class " << i << ": name=\"" << classInfo.name
-                      << "\" category=\"" << classInfo.category
-                      << "\" cid=" << tuidToString(classInfo.cid) << std::endl;
-        }
-        __except (EXCEPTION_EXECUTE_HANDLER)
+        tresult classInfoResult = kResultFalse;
+        if (! callGetClassInfo(factory, i, classInfo, classInfoResult, exceptionCode))
         {
             std::cout << "[FAIL] getClassInfo(" << i << ") raised a structured exception (code 0x"
-                      << std::hex << GetExceptionCode() << std::dec << ")" << std::endl;
+                      << std::hex << exceptionCode << std::dec << ")" << std::endl;
+            continue;
         }
+        if (classInfoResult != kResultOk)
+        {
+            std::cout << "[FAIL] getClassInfo(" << i << ") returned error code " << classInfoResult << std::endl;
+            continue;
+        }
+        std::cout << "[OK] Class " << i << ": name=\"" << classInfo.name
+                  << "\" category=\"" << classInfo.category
+                  << "\" cid=" << tuidToString(classInfo.cid) << std::endl;
     }
 
     std::cout << "\nDone. If every step above says [OK], the plugin's Windows load and VST3\n"
