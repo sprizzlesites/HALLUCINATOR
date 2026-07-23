@@ -40,7 +40,13 @@ if(WIN32)
     # loading module first" DLL search order finds them at load time.
     set(TORCH_LIBRARIES "${TORCH_ROOT}/lib/torch_cpu.lib" "${TORCH_ROOT}/lib/c10.lib")
     set(TORCH_CXX_FLAGS "")
-    file(GLOB TORCH_RUNTIME_DLLS "${TORCH_ROOT}/lib/*.dll")
+    # torch's Windows wheel also ships a torch/bin/ folder duplicating a
+    # couple of lib/*.dll files (asmjit.dll, fbgemm.dll) - unclear why two
+    # copies exist, but copying both is a safe, low-cost hedge while a real
+    # user's load failure (error 126 on torch_cpu.dll/fbgemm.dll,
+    # confirmed NOT caused by a missing file or the VC++ redistributable)
+    # is investigated further.
+    file(GLOB TORCH_RUNTIME_DLLS "${TORCH_ROOT}/lib/*.dll" "${TORCH_ROOT}/bin/*.dll")
 else()
     set(TORCH_LIBRARIES "${TORCH_ROOT}/lib/libtorch_cpu.so" "${TORCH_ROOT}/lib/libc10.so")
     # This PyPI build of libtorch_cpu.so was compiled against the old
