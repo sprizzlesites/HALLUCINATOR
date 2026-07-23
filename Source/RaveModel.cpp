@@ -1,5 +1,9 @@
 #include "RaveModel.h"
 #include <ATen/Parallel.h>
+#include <cstdint>
+#include <cmath>
+#include <algorithm>
+#include <vector>
 
 bool RaveModel::load(const juce::File& modelFile, juce::String& errorMessage)
 {
@@ -253,4 +257,97 @@ torch::Tensor RaveModel::decode(const torch::Tensor& latent)
         result = result.narrow(1, 0, 1);
 
     return result;
+}
+
+int RaveModel::measureInternalLatency()
+{
+    if (! loaded)
+        return 0;
+
+    try
+    {
+        torch::NoGradGuard noGrad;
+
+        const int warmupFrames = 6;   // let the silence floor settle
+        const int activeFrames  = 30; // loud region; covers latency up to ~30*ratio
+        const int totalFrames   = warmupFrames + activeFrames;
+
+        std::vector<float> out;
+        out.reserve((size_t) totalFrames * (size_t) ratio);
+
+        // Deterministic loud broadband test signal (a tiny LCG), so the
+        // measurement is repeatable and survives whatever the model does to
+        // it far better than a pure tone would.
+        uint32_t rng = 0x1234567u;
+        auto nextNoise = [&rng]() -> float
+        {
+            rng = rng * 1664525u + 1013904223u;
+            return ((float) (rng >> 8) / (float) (1u << 24)) * 2.0f - 1.0f; // [-1,1)
+        };
+
+        for (int f = 0; f < totalFrames; ++f)
+        {
+            auto x = torch::zeros({ 1, 1, ratio });
+            if (f >= warmupFrames)
+            {
+                auto* xp = x.data_ptr<float>();
+                for (int i = 0; i < ratio; ++i)
+                    xp[i] = 0.3f * nextNoise();
+            }
+
+            auto z = encode(x);
+            auto y = decode(z).contiguous();
+            const auto* yp = y.data_ptr<float>();
+            out.insert(out.end(), yp, yp + ratio);
+        }
+
+        return juce::jlimit(0, activeFrames * ratio, detectResponseOnset(out, warmupFrames * ratio));
+    }
+    catch (const std::exception&)
+    {
+        return 0;
+    }
+}
+
+int RaveModel::detectResponseOnset(const std::vector<float>& out, int inputStepSample)
+{
+    if (inputStepSample <= 0 || inputStepSample >= (int) out.size())
+        return 0;
+
+    // Silence floor from the warmup (pre-step) region's output.
+    float floorMag = 1.0e-6f;
+    for (int i = 0; i < inputStepSample; ++i)
+        floorMag = std::max(floorMag, std::abs(out[(size_t) i]));
+
+    const float threshold = std::max(floorMag * 4.0f, 0.02f);
+
+    // First output sample (at/after the input step) whose short trailing RMS
+    // exceeds the threshold => the input step's influence has arrived.
+    const int rmsWin = 64;
+    double acc = 0.0;
+    int onset = -1;
+    for (int i = 0; i < (int) out.size(); ++i)
+    {
+        const float s = out[(size_t) i];
+        acc += (double) s * s;
+        if (i >= rmsWin)
+        {
+            const float old = out[(size_t) (i - rmsWin)];
+            acc -= (double) old * old;
+        }
+        if (i >= inputStepSample && i >= rmsWin)
+        {
+            const float rms = (float) std::sqrt(acc / rmsWin);
+            if (rms > threshold)
+            {
+                onset = i - rmsWin / 2; // approx the leading edge, not the window centre
+                break;
+            }
+        }
+    }
+
+    if (onset < inputStepSample)
+        return 0; // couldn't determine - safe fallback
+
+    return onset - inputStepSample;
 }

@@ -99,22 +99,33 @@ void HallucinatorAudioProcessor::resizeBuffersForRatio(int ratio)
     currentRatio = ratio;
     crossfadeLength = chooseCrossfadeLength(ratio);
 
-    const int ringCapacity = ratio * 4 + 8192;
-    inputRing.setSize(ringCapacity);
-    outputRing.setSize(ringCapacity);
-    dryDelayL.setSize(ringCapacity);
-    dryDelayR.setSize(ringCapacity);
+    // Wet-path pipeline latency is the ratio-sized frame buffering (the
+    // output ring pre-fill). The DRY path, however, must match the wet
+    // path's TOTAL latency = that pipeline buffering PLUS the model's own
+    // internal algorithmic latency (which is baked into when the model emits
+    // audio content, not into any ring here). Otherwise the dry signal plays
+    // early by the model latency - exactly the symptom reported when the
+    // model's true latency (~24k samples for VCTK) dwarfed the ratio.
+    const int dryDelaySamples = ratio + modelInternalLatency;
 
-    // Pre-load the output ring and the dry delay lines with `ratio` samples
-    // of silence. This is what makes the declared setLatencySamples(ratio)
-    // true: without it, a push-then-pop of the same block within a single
-    // processBlock call would return what was just written (zero delay), so
-    // the dry path wouldn't actually be delayed to match the wet path, and
-    // Dry/Wet blending would smear instead of staying phase-aligned.
-    const std::vector<float> zeros((size_t) ratio, 0.0f);
-    outputRing.push(zeros.data(), ratio);
-    dryDelayL.push(zeros.data(), ratio);
-    dryDelayR.push(zeros.data(), ratio);
+    const int wetCapacity = ratio * 4 + hostBlockSize + 8192;
+    const int dryCapacity = dryDelaySamples + hostBlockSize + 8192;
+    inputRing.setSize(wetCapacity);
+    outputRing.setSize(wetCapacity);
+    dryDelayL.setSize(dryCapacity);
+    dryDelayR.setSize(dryCapacity);
+
+    // Pre-load the output ring with `ratio` silence (the pipeline latency)
+    // and the dry delay lines with the full `ratio + model latency` (the
+    // total latency), so a push-then-pop within one processBlock returns
+    // delayed silence rather than what was just written, and Dry/Wet stays
+    // phase-aligned. This is what makes the reported latency below true.
+    const std::vector<float> wetZeros((size_t) ratio, 0.0f);
+    outputRing.push(wetZeros.data(), ratio);
+
+    const std::vector<float> dryZeros((size_t) dryDelaySamples, 0.0f);
+    dryDelayL.push(dryZeros.data(), dryDelaySamples);
+    dryDelayR.push(dryZeros.data(), dryDelaySamples);
 
     prevLastSample = 0.0f;
     havePrevTail = false;
@@ -150,17 +161,39 @@ void HallucinatorAudioProcessor::installLoadedModel(RaveModel&& model, const juc
 
     latentIsFrozen = false;
 
-    setLatencySamples(currentRatio);
+    // modelInternalLatency is still whatever was measured for a previous
+    // model (0 on first load); prepareToPlay measures the real value for
+    // this model before playback and re-reports. Reporting ratio-only here
+    // keeps construction/scanning fast (no measurement inference at load).
+    setLatencySamples(currentRatio + modelInternalLatency);
 }
 
-void HallucinatorAudioProcessor::prepareToPlay(double sampleRate, int /*samplesPerBlock*/)
+void HallucinatorAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     hostSampleRate = sampleRate;
-
-    resizeBuffersForRatio(currentRatio);
+    hostBlockSize = juce::jmax(1, samplesPerBlock);
 
     if (raveModel.isLoaded())
     {
+        // Measure this model's true internal latency once (cached by path).
+        // Done on a THROWAWAY model instance so the measurement's heavy,
+        // state-advancing inference doesn't disturb the playback model - and
+        // done here in prepareToPlay (instantiation/play time), not in the
+        // constructor, so plugin scanning stays fast. See
+        // RaveModel::measureInternalLatency and resizeBuffersForRatio for
+        // how this value drives both the reported latency and the dry-delay
+        // alignment.
+        if (latencyMeasuredForPath != loadedModelPath)
+        {
+            juce::String measureError;
+            RaveModel probe;
+            if (probe.load(juce::File(loadedModelPath), measureError))
+            {
+                modelInternalLatency = probe.measureInternalLatency();
+                latencyMeasuredForPath = loadedModelPath;
+            }
+        }
+
         // Real streaming RAVE exports carry internal cached-convolution
         // state across encode()/decode() calls (see Resources/
         // MODEL_INTERFACE.md's "Encode / decode contract"). Reseeding the
@@ -182,10 +215,14 @@ void HallucinatorAudioProcessor::prepareToPlay(double sampleRate, int /*samplesP
         const int seedValue = pSeed != nullptr ? (int) pSeed->load() : 0;
         latentEngine.reseedRng(seedValue, deterministic);
 
-        setLatencySamples(currentRatio);
+        // Size/pre-fill buffers AFTER modelInternalLatency is known, so the
+        // dry delay matches the wet path's total latency.
+        resizeBuffersForRatio(currentRatio);
+        setLatencySamples(currentRatio + modelInternalLatency);
     }
     else
     {
+        resizeBuffersForRatio(currentRatio);
         setLatencySamples(0);
     }
 

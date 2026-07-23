@@ -140,8 +140,20 @@ private:
     juce::String lastModelError;
 
     double hostSampleRate = 44100.0;
+    int hostBlockSize = 512;
     int currentRatio = 2048;
     int crossfadeLength = 32;
+
+    // The loaded model's measured internal algorithmic latency, in samples
+    // (see RaveModel::measureInternalLatency). A real streaming RAVE export
+    // adds thousands of samples of latency beyond the frame buffering; this
+    // is what the plugin reports to the host (on top of the ratio-sized
+    // pipeline latency) and what the dry path is delayed by so Dry/Wet stays
+    // phase-aligned. Measured once per model (cached by path) on a throwaway
+    // model instance in prepareToPlay, so scanning stays fast and the
+    // playback model's state stays pristine.
+    int modelInternalLatency = 0;
+    juce::String latencyMeasuredForPath;
 
     RingBuffer inputRing;
     RingBuffer outputRing;

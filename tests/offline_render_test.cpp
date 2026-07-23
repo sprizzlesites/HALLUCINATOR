@@ -222,6 +222,34 @@ int main(int argc, char** argv)
         check(resolvedWin == expectedWin, "Bundled-model path resolves correctly from a Windows layout");
     }
 
+    // --- latency onset detection against a KNOWN synthetic delay ------------
+    // Validates the core of RaveModel::measureInternalLatency independent of
+    // any model: build the concatenated "probe output" it would analyse -
+    // silence floor, then (after a known delay past the input step) a loud
+    // response - and confirm the detector recovers that delay within a small
+    // tolerance. This is the piece that fixes the reported "dry plays ~24k
+    // samples early" (the true model latency was never measured before).
+    {
+        const int inputStep = 6 * 2048;
+        for (int trueDelay : { 0, 2048, 11 * 2048 + 733, 22000 })
+        {
+            std::vector<float> probe((size_t) (inputStep + 40 * 2048), 0.0f);
+            // faint non-zero silence floor, like a real model's decode of silence
+            juce::Random rng (12345);
+            for (auto& s : probe) s = (rng.nextFloat() * 2.0f - 1.0f) * 0.002f;
+            // loud response begins `trueDelay` samples after the input step
+            for (int i = inputStep + trueDelay; i < (int) probe.size(); ++i)
+                probe[(size_t) i] += std::sin((float) i * 0.05f) * 0.4f;
+
+            const int measured = RaveModel::detectResponseOnset(probe, inputStep);
+            const int errSamples = std::abs(measured - trueDelay);
+            std::cout << "  latency-detect: true=" << trueDelay << " measured=" << measured
+                      << " err=" << errSamples << std::endl;
+            check(errSamples <= 96,
+                  "Latency onset detected within tolerance for true delay " + juce::String(trueDelay));
+        }
+    }
+
     // --- load model ---------------------------------------------------------
     HallucinatorAudioProcessor proc;
     juce::String err;

@@ -77,6 +77,33 @@ public:
     */
     torch::Tensor decode(const torch::Tensor& latent);
 
+    /** Empirically measures the model's internal algorithmic latency (in
+        samples) - the delay between an input sample and when its influence
+        first appears in the output. A real streaming RAVE export has
+        substantial internal latency (causal-conv cache + PQMF group delay)
+        that is NOT captured by `ratio` alone; a stateless model reports ~0.
+
+        Method: feed warmup silence (to establish the model's silence floor),
+        then a sustained loud broadband burst, and detect the sample at which
+        the output energy first rises above that floor. Returns 0 if it can't
+        be determined (safe fallback - the caller then compensates only the
+        frame buffering, as before).
+
+        WARNING: this advances the model's streaming state (it runs many
+        encode/decode calls), so call it on a throwaway instance, or reload
+        the model afterwards before real processing (the plugin measures on a
+        separate temporary RaveModel for exactly this reason). */
+    int measureInternalLatency();
+
+    /** The onset-detection core of measureInternalLatency(), factored out so
+        it can be unit-tested against a synthetic response with a known delay
+        (see tests/offline_render_test.cpp). Given the concatenated decoded
+        output of the warmup-silence-then-loud probe, returns the delay (in
+        samples) between the input step (at sample `inputStepSample`) and the
+        point where the output energy first rises above the silence floor
+        measured over [0, inputStepSample). Returns 0 if not detectable. */
+    static int detectResponseOnset(const std::vector<float>& output, int inputStepSample);
+
 private:
     bool tryLoadSidecarJson(const juce::File& modelFile);
     bool tryPurposeBuiltInterface();
