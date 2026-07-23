@@ -1,16 +1,29 @@
 name: Windows VST3 build
 
 # Manual trigger only (Actions tab -> this workflow -> Run workflow), so it
-# never runs as a side effect of a push. Uses a GitHub-hosted windows-latest
-# runner: free/unlimited standard-runner minutes on a public repo, which is
-# the whole point - this project's own dev environment is Linux and can't
-# produce or sign a real Windows binary (see README's Windows section).
+# never runs as a side effect of a push. Uses a GitHub-hosted runner: free/
+# unlimited standard-runner minutes on a public repo, which is the whole
+# point - this project's own dev environment is Linux and can't produce or
+# sign a real Windows binary (see README's Windows section).
+#
+# Deliberately windows-2022, NOT windows-latest: windows-latest currently
+# resolves to a "windows-2025-vs2026" image (Visual Studio 2026 - a preview/
+# insider toolchain, confirmed via a real user's diagnostic investigation).
+# A binary built with it needs runtime components (UCRT/VCRuntime) that
+# don't exist yet on ordinary Windows installations - CI's own smoke test
+# passed every time because that SAME image has the matching bleeding-edge
+# components, while a real user's machine (even fully patched via normal
+# Windows Update, even after installing the official VS2022/v17 VC++
+# Redistributable - which is a DIFFERENT, older runtime generation) kept
+# failing with "module not found" trying to load torch_cpu.dll/fbgemm.dll.
+# windows-2022 (VS2022, "v17") is the stable, widely-deployed generation
+# that redistributable actually matches.
 on:
   workflow_dispatch: {}
 
 jobs:
   build-windows:
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
 
