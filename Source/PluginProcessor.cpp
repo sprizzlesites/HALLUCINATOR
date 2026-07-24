@@ -314,7 +314,15 @@ void HallucinatorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
     const int numChannels = buffer.getNumChannels();
 
     if (! raveModel.isLoaded())
-        return; // pure passthrough: leave buffer untouched (Dry/Wet is moot with no wet path)
+    {
+        // Pure passthrough: leave buffer untouched (Dry/Wet is moot with no
+        // wet path), but still feed the scope with the dry signal so the
+        // audio view shows life before a model has loaded.
+        feedVisualiser(buffer.getReadPointer(0),
+                       numChannels > 1 ? buffer.getReadPointer(1) : nullptr,
+                       numSamples);
+        return;
+    }
 
     const float dryWet     = pDryWet->load();
     const float noiseAmt   = pNoiseAmount->load();
@@ -437,6 +445,30 @@ void HallucinatorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
             outR[i] = mixedR;
         }
     }
+
+    // Feed the editor's oscilloscope (post-mix, mono-summed) via the lock-free
+    // ring - see getVisualisationSnapshot().
+    feedVisualiser(outL, outR, numSamples);
+}
+
+void HallucinatorAudioProcessor::feedVisualiser(const float* l, const float* r, int numSamples)
+{
+    int wp = visWritePos.load(std::memory_order_relaxed);
+    for (int i = 0; i < numSamples; ++i)
+    {
+        visBuffer[(size_t) wp] = r != nullptr ? 0.5f * (l[i] + r[i]) : l[i];
+        wp = (wp + 1) % visSize;
+    }
+    visWritePos.store(wp, std::memory_order_release);
+}
+
+void HallucinatorAudioProcessor::getVisualisationSnapshot(float* dest) const
+{
+    // Acquire pairs with the audio thread's release store below, so the
+    // samples we read were all written before the position we observe.
+    const int wp = visWritePos.load(std::memory_order_acquire);
+    for (int i = 0; i < visSize; ++i)
+        dest[i] = visBuffer[(size_t) ((wp + i) % visSize)];
 }
 
 juce::AudioProcessorEditor* HallucinatorAudioProcessor::createEditor()

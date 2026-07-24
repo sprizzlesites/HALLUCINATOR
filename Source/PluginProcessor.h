@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <atomic>
+#include <array>
 
 #include "Params.h"
 #include "RaveModel.h"
@@ -99,6 +100,15 @@ public:
         for that many samples). >1 means the plugin is falling behind. */
     float getCpuLoadFraction() const { return cpuLoadFraction.load(std::memory_order_relaxed); }
 
+    /** Number of samples in the editor's oscilloscope view. */
+    static constexpr int visSize = 1024;
+
+    /** Copies the most recent `visSize` output samples (oldest -> newest)
+        into `dest` for the editor's audio view. Lock-free and tolerant of a
+        concurrent writer (a torn read just shows a slightly-stale scope,
+        which is invisible at display rates) - never blocks the audio thread. */
+    void getVisualisationSnapshot(float* dest) const;
+
     /** Looks for a model bundled alongside the plugin binary at
         <bundle>.vst3/Contents/Resources/default_rave_model.ts, so a dist/
         package containing both the plugin and a model in that conventional
@@ -133,6 +143,10 @@ private:
     void applyStereoWidth(const float* wetMono, float* wetL, float* wetR, int numSamples);
 
     void resizeBuffersForRatio(int ratio);
+
+    /** Pushes `numSamples` of (mono-summed) output into the lock-free scope
+        ring for the editor - see getVisualisationSnapshot(). */
+    void feedVisualiser(const float* l, const float* r, int numSamples);
 
     RaveModel raveModel;
     LatentEngine latentEngine;
@@ -176,6 +190,14 @@ private:
     static constexpr float allpassGain = 0.35f;
 
     std::atomic<float> cpuLoadFraction { 0.0f };
+
+    // Lock-free oscilloscope ring for the editor's audio-view "screen". The
+    // audio thread writes the post-mix output here (single producer); the
+    // editor reads a snapshot on the message thread (single consumer). A torn
+    // read just shows a slightly-stale scope, invisible at display rates, so
+    // no lock is needed and the audio thread never blocks.
+    std::array<float, (size_t) visSize> visBuffer {};
+    std::atomic<int> visWritePos { 0 };
 
     // Cached raw parameter pointers (APVTS guarantees these stay valid for
     // the processor's lifetime).

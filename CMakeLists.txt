@@ -88,6 +88,12 @@ juce_add_plugin(HallucinatorRAVE
 
 juce_generate_juce_header(HallucinatorRAVE)
 
+# Embed the Sprizzle brand logo (transparent RGBA) into the binary as
+# BinaryData so nothing is read from disk at runtime - part of keeping the
+# plugin self-contained. Generates a BinaryData.h with BinaryData::SprizzleLogo_png.
+juce_add_binary_data(HallucinatorRAVEAssets
+    SOURCES Assets/SprizzleLogo.png)
+
 target_sources(HallucinatorRAVE
     PRIVATE
         Source/PluginProcessor.cpp
@@ -115,6 +121,7 @@ target_include_directories(HallucinatorRAVE SYSTEM PRIVATE ${TORCH_INCLUDE_DIRS}
 # warning-free and faster to iterate on.
 target_link_libraries(HallucinatorRAVE
     PRIVATE
+        HallucinatorRAVEAssets
         juce::juce_audio_utils
         juce::juce_dsp
         ${TORCH_LIBRARIES}
@@ -240,10 +247,36 @@ if(HALLUCINATOR_BUILD_TOOLS)
         JUCE_USE_CURL=0
         JUCE_VST3_CAN_REPLACE_VST2=0)
     target_link_libraries(offline_render_test PRIVATE
+        HallucinatorRAVEAssets
         juce::juce_audio_utils
         juce::juce_audio_formats
         juce::juce_dsp
         ${TORCH_LIBRARIES})
     set_target_properties(offline_render_test PROPERTIES
+        BUILD_RPATH "${TORCH_INSTALL_PREFIX}/lib")
+
+    # Headless editor-preview renderer (dev aid; not shipped) - paints the
+    # neon UI to a PNG so it can be reviewed without a DAW or a display.
+    add_executable(render_editor_preview
+        tools/render_editor_preview.cpp
+        Source/PluginProcessor.cpp
+        Source/PluginEditor.cpp
+        Source/RaveModel.cpp
+        Source/LatentEngine.cpp
+        Source/Params.cpp)
+    target_include_directories(render_editor_preview PRIVATE Source)
+    target_include_directories(render_editor_preview SYSTEM PRIVATE ${TORCH_INCLUDE_DIRS})
+    target_compile_options(render_editor_preview PRIVATE ${TORCH_CXX_FLAGS_LIST})
+    target_compile_definitions(render_editor_preview PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_VST3_CAN_REPLACE_VST2=0)
+    target_link_libraries(render_editor_preview PRIVATE
+        HallucinatorRAVEAssets
+        juce::juce_audio_utils
+        juce::juce_dsp
+        juce::juce_gui_extra
+        ${TORCH_LIBRARIES})
+    set_target_properties(render_editor_preview PROPERTIES
         BUILD_RPATH "${TORCH_INSTALL_PREFIX}/lib")
 endif()
